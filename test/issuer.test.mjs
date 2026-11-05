@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generateEd25519, signerFor, didKeyFromJwk } from '../src/shared/keys.mjs';
+import { sha256Hex, canonicalJson } from '../src/shared/encoding.mjs';
 import { didDocument, didWebFromBase } from '../src/issuer/did-web.mjs';
 import { getListFromStatusListJWT } from '@owf/token-status-list';
 import { buildStatusList, checkStatus } from '../src/issuer/status-list.mjs';
@@ -30,7 +31,8 @@ test('a credential verifies against the DID document', async () => {
   assert.equal(payload.iss, ISSUER_DID);
   assert.equal(payload.sub, didKeyFromJwk(holder.publicJwk));
   assert.equal(header.typ, 'dc+sd-jwt');
-  assert.equal(payload.certificate_commitment, certificateCommitment(cert));
+  assert.equal(payload.certificate_commitment, certificateCommitment(cert, payload.certificate_salt));
+  assert.notEqual(payload.certificate_commitment, sha256Hex(canonicalJson(cert)));
   assert.equal(payload.issuing_body, 'CBSE (simulated)');
   assert.equal(payload.exp, undefined);
 });

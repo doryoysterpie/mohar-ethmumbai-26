@@ -15,7 +15,7 @@ npm test
 
 ## Issuer (SIMULATED)
 
-The issuer signs eligibility credentials as SD-JWT VCs with Ed25519, identifies itself with did:web, and publishes a one-bit status list. Every certificate field is a separate disclosure. Fixture certificates in `fixtures/certificates/` describe invented people.
+The issuer signs eligibility credentials as SD-JWT VCs with Ed25519, identifies itself with did:web, and publishes a one-bit status list. Every certificate field is a separate disclosure. The credential also carries `certificate_commitment = SHA-256("mohar/cert/v1" || certificate_salt || canonical certificate JSON)` and the 32-byte random `certificate_salt`, both selectively disclosable; without the salt the commitment cannot be recomputed from the certificate. Fixture certificates in `fixtures/certificates/` describe invented people.
 
 ```
 node bin/issuer.mjs keygen                                   # key in .keys/ (not tracked); writes site/did.json
@@ -103,12 +103,14 @@ An export bundle holds the signed receipt or re-check receipt, its salt, its log
 3. merkle: the entry's path leads to the batch root;
 4. sepolia: the transaction's calldata on Sepolia is the batch root, read through an RPC that reports chain 11155111;
 5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`.
+6. certificate binding (optional): with `--certificate` and `--certificate-salt` (both from the presentation the school holds), the certificate and salt recompute the receipt's `certificate_commitment`; reported as `not supplied` otherwise.
 
 ```
 node bin/inspect.mjs bundle.json        # MOHAR_SEPOLIA_RPCS and MOHAR_ESPLORA_URL override the public defaults
+node bin/inspect.mjs bundle.json --certificate certificate.json --certificate-salt <hex>
 ```
 
-Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass and check 5 passes or is pending. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
+Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass, check 6 passes or is not supplied, and check 5 passes or is pending. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
 
 ## Licence
 

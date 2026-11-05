@@ -26,7 +26,7 @@ export const REFUSALS = [
 export const CLOCK_SKEW_SECONDS = 60;
 
 /** Claims the school needs disclosed to sign a receipt. */
-export const REQUIRED_CLAIMS = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment'];
+export const REQUIRED_CLAIMS = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'certificate_salt'];
 
 /** Disclosed claims copied onto the receipt. The receipt carries no name and no identity. */
 export const RECEIPT_CLAIMS = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body'];

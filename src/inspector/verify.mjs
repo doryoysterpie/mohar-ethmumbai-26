@@ -7,6 +7,7 @@ import { entryHash } from '../log/chain.mjs';
 import { rootFromPath } from '../log/merkle.mjs';
 import { readAnchor, chainIdOf } from '../anchor/sepolia.mjs';
 import { otsState, otsBitcoinAttestations } from '../anchor/ots.mjs';
+import { certificateCommitment } from '../issuer/credential.mjs';
 
 export const SEPOLIA_CHAIN_ID = 11155111;
 const TYP = { receipt: 'receipt+jwt', recheck: 'recheck+jwt' };
@@ -98,6 +99,25 @@ async function checkOts(b, bitcoinHeader) {
   }
 }
 
+/**
+ * 6 (optional). The certificate and its salt, obtained from the school's presentation, recompute the receipt's
+ * certificate_commitment. Reported as "not supplied" when no certificate and salt are given.
+ */
+function checkCertificate(b, certificate, salt) {
+  if (certificate === undefined && salt === undefined) return { check: 'certificate binding', result: 'not supplied', detail: 'no certificate and salt supplied' };
+  try {
+    if (certificate === undefined || salt === undefined) return fail('certificate binding', 'certificate and salt must be supplied together');
+    const { payload } = decodeJws(b.record);
+    if (typeof payload.certificate_commitment !== 'string') return fail('certificate binding', 'record carries no certificate_commitment');
+    if (certificateCommitment(certificate, salt) !== payload.certificate_commitment) {
+      return fail('certificate binding', 'certificate and salt do not recompute the receipt certificate_commitment');
+    }
+    return pass('certificate binding', 'certificate and salt recompute the receipt certificate_commitment');
+  } catch (e) {
+    return fail('certificate binding', `certificate binding cannot be checked: ${e.message}`);
+  }
+}
+
 /** Bitcoin block header by height from a public Esplora API (default blockstream.info). Returns { merkleroot, time }. */
 export function esploraHeaders(base = 'https://blockstream.info/api') {
   return async (height) => {
@@ -112,16 +132,18 @@ export function esploraHeaders(base = 'https://blockstream.info/api') {
 }
 
 /**
- * Runs the five checks on a bundle. Each check runs whatever the others found.
- * `ok` is true when signature, entry, merkle and sepolia pass and ots passes or is pending.
+ * Runs the five checks on a bundle, and the optional sixth (certificate binding) when a certificate and its salt are
+ * supplied. Each check runs whatever the others found. `ok` is true when signature, entry, merkle and sepolia pass,
+ * ots passes or is pending, and certificate binding passes or is not supplied.
  * @param {any} bundle
- * @param {{ rpcUrls?: string[], bitcoinHeader?: (height: number) => Promise<{ merkleroot: string, time: number }> }} [options]
+ * @param {{ rpcUrls?: string[], bitcoinHeader?: (height: number) => Promise<{ merkleroot: string, time: number }>,
+ *   certificate?: Record<string, unknown>, certificateSalt?: string }} [options]
  * @returns {Promise<{ ok: boolean, checks: CheckResult[] }>}
  */
 export async function verifyBundle(bundle, options = {}) {
   if (bundle?.format !== 'mohar-bundle/1') {
     const r = fail('format', `not a mohar-bundle/1 bundle`);
-    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots'].map((check) => ({ ...r, check })) };
+    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots', 'certificate binding'].map((check) => ({ ...r, check })) };
   }
   const checks = [
     await checkSignature(bundle),
@@ -129,7 +151,8 @@ export async function verifyBundle(bundle, options = {}) {
     checkMerkle(bundle),
     await checkSepolia(bundle, options.rpcUrls),
     await checkOts(bundle, options.bitcoinHeader ?? esploraHeaders()),
+    checkCertificate(bundle, options.certificate, options.certificateSalt),
   ];
-  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks[4].result !== 'fail';
+  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks[4].result !== 'fail' && checks[5].result !== 'fail';
   return { ok, checks };
 }

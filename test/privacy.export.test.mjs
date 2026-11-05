@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { verifyBundle } from '../src/inspector/verify.mjs';
+import { readAnchor } from '../src/anchor/sepolia.mjs';
+import { sha256Hex, canonicalJson } from '../src/shared/encoding.mjs';
 import { scenario } from './helpers/scenario.mjs';
 import { cert } from './helpers/world.mjs';
 
@@ -21,7 +23,7 @@ test('the export verifies with both service databases deleted and both services 
     await assert.rejects(fetch(`${logUrl}/batches/1`));
     for (const bundle of [receipt, recheck]) {
       const r = await verifyBundle(bundle, { rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader });
-      assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass']], bundle.record_type);
+      assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass'], ['certificate binding', 'not supplied']], bundle.record_type);
       assert.equal(r.ok, true);
     }
   } finally {
@@ -63,6 +65,32 @@ test('a bundle carries no personal data, no presentation and no consent', async 
       assert.ok(!text.includes(s.w.holderDid), 'holder did:key in the bundle');
     }
     await s.destroyServices();
+  } finally {
+    await s.close();
+  }
+});
+
+test('no receipt, re-check, log entry, root or anchor carries SHA-256 of any fixture certificate, or the certificate salt', async () => {
+  const s = await scenario({ bitcoinHeight: 905321 });
+  try {
+    const fixtures = fs.readdirSync(new URL('../fixtures/certificates/', import.meta.url))
+      .map((f) => JSON.parse(fs.readFileSync(new URL(`../fixtures/certificates/${f}`, import.meta.url), 'utf8')));
+    const unsalted = fixtures.flatMap((c) => [sha256Hex(canonicalJson(c)), sha256Hex(JSON.stringify(c))]);
+    const receipt = JSON.parse(Buffer.from(s.receipt.receipt.split('.')[1], 'base64url'));
+    const recheck = JSON.parse(Buffer.from(s.recheck.recheck.split('.')[1], 'base64url'));
+    const tx = await readAnchor({ txHash: s.batch.sepolia.tx_hash, rpcUrls: [s.rpc.url] });
+    const places = {
+      receipt: JSON.stringify(receipt),
+      recheck: JSON.stringify(recheck),
+      'log entries': JSON.stringify(s.logStore.entries()),
+      'batch root': s.batch.root,
+      'anchor calldata': tx.calldata,
+    };
+    assert.equal(typeof receipt.certificate_commitment, 'string');
+    for (const [where, text] of Object.entries(places)) {
+      for (const h of unsalted) assert.ok(!text.includes(h), `SHA-256 of a fixture certificate in the ${where}`);
+      assert.ok(!text.includes(s.certificateSalt), `certificate_salt in the ${where}`);
+    }
   } finally {
     await s.close();
   }
