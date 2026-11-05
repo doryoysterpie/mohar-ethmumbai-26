@@ -1,0 +1,22 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1"
+  ],
+  "id": "did:web:doryoysterpie.github.io:mohar-ethmumbai-26",
+  "verificationMethod": [
+    {
+      "id": "did:web:doryoysterpie.github.io:mohar-ethmumbai-26#key-1",
+      "type": "JsonWebKey2020",
+      "controller": "did:web:doryoysterpie.github.io:mohar-ethmumbai-26",
+      "publicKeyJwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "6C5UHO_rnKv0N8b8NplCbWf6ZbksEAHy9vUbb3gH3vA"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:web:doryoysterpie.github.io:mohar-ethmumbai-26#key-1"
+  ]
+}

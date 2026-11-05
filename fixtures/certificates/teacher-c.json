@@ -1,0 +1,24 @@
+{
+  "notice": "SIMULATED. Invented person and invented results; not a real certificate.",
+  "name": "Ishita Rane [SIMULATED]",
+  "roll_no": "SIM-2024-300003",
+  "dob": "1996-07-28",
+  "category": "GENERAL",
+  "mother_name": "Kavita Rane [SIMULATED]",
+  "father_or_husband_name": "Vikram Rane [SIMULATED]",
+  "paper": "both",
+  "stage": "both",
+  "exam_session": "JULY 2024",
+  "qualified": true,
+  "marks": [
+    { "paper": "I", "subject": "Child Development and Pedagogy", "max": 30, "obtained": 25 },
+    { "paper": "I", "subject": "Language I", "max": 30, "obtained": 24 },
+    { "paper": "I", "subject": "Language II", "max": 30, "obtained": 21 },
+    { "paper": "I", "subject": "Mathematics", "max": 30, "obtained": 22 },
+    { "paper": "I", "subject": "Environmental Studies", "max": 30, "obtained": 20 },
+    { "paper": "II", "subject": "Child Development and Pedagogy", "max": 30, "obtained": 23 },
+    { "paper": "II", "subject": "Language I", "max": 30, "obtained": 24 },
+    { "paper": "II", "subject": "Language II", "max": 30, "obtained": 19 },
+    { "paper": "II", "subject": "Social Studies", "max": 60, "obtained": 40 }
+  ]
+}

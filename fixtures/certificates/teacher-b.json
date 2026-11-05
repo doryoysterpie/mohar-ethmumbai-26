@@ -1,0 +1,19 @@
+{
+  "notice": "SIMULATED. Invented person and invented results; not a real certificate.",
+  "name": "Kabir Joshi [SIMULATED]",
+  "roll_no": "SIM-2024-200002",
+  "dob": "1991-11-04",
+  "category": "OBC",
+  "mother_name": "Meera Joshi [SIMULATED]",
+  "father_or_husband_name": "Anil Joshi [SIMULATED]",
+  "paper": "II",
+  "stage": "elementary",
+  "exam_session": "JULY 2024",
+  "qualified": true,
+  "marks": [
+    { "subject": "Child Development and Pedagogy", "max": 30, "obtained": 21 },
+    { "subject": "Language I", "max": 30, "obtained": 23 },
+    { "subject": "Language II", "max": 30, "obtained": 18 },
+    { "subject": "Mathematics and Science", "max": 60, "obtained": 41 }
+  ]
+}

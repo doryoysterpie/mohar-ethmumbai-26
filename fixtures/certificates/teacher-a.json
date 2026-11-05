@@ -1,0 +1,20 @@
+{
+  "notice": "SIMULATED. Invented person and invented results; not a real certificate.",
+  "name": "Anaya Deshmukh [SIMULATED]",
+  "roll_no": "SIM-2024-100001",
+  "dob": "1994-03-12",
+  "category": "GENERAL",
+  "mother_name": "Sunita Deshmukh [SIMULATED]",
+  "father_or_husband_name": "Rajesh Deshmukh [SIMULATED]",
+  "paper": "I",
+  "stage": "primary",
+  "exam_session": "JULY 2024",
+  "qualified": true,
+  "marks": [
+    { "subject": "Child Development and Pedagogy", "max": 30, "obtained": 24 },
+    { "subject": "Language I", "max": 30, "obtained": 22 },
+    { "subject": "Language II", "max": 30, "obtained": 20 },
+    { "subject": "Mathematics", "max": 30, "obtained": 19 },
+    { "subject": "Environmental Studies", "max": 30, "obtained": 23 }
+  ]
+}
