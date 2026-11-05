@@ -1,0 +1,112 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
+import { generateEd25519, didKeyFromJwk, verifierFor } from '../src/shared/keys.mjs';
+import { signJws, decodeJws } from '../src/shared/jws.mjs';
+import { didDocument } from '../src/issuer/did-web.mjs';
+import { issueCredential, hasher } from '../src/issuer/credential.mjs';
+import { ISSUER_DID } from '../src/issuer/profile.mjs';
+import { signConsent, consentHash, verifyConsent, didKeyKid, CONSENT_TYP, academicYearEnd } from '../src/holder/consent.mjs';
+import { buildPresentation } from '../src/holder/presentation.mjs';
+
+const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
+const NONCE = 'nonce-0123456789abcdef';
+const NOW = new Date('2026-11-06T10:00:00Z');
+
+async function setup() {
+  const issuer = await generateEd25519();
+  const holder = await generateEd25519();
+  const school = await generateEd25519();
+  const { kid } = didDocument(ISSUER_DID, issuer.publicJwk);
+  const credential = await issueCredential({
+    certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid,
+  });
+  const holderDid = didKeyFromJwk(holder.publicJwk);
+  const aud = didKeyFromJwk(school.publicJwk);
+  const consent = await signConsent({ holderDid, holderPrivateJwk: holder.privateJwk, schoolDid: aud, now: NOW });
+  const present = (over = {}) => buildPresentation({
+    credential, consent, holderPrivateJwk: holder.privateJwk, nonce: NONCE, aud, now: NOW, ...over,
+  });
+  return { issuer, holder, school, credential, holderDid, aud, consent, present };
+}
+
+test('key binding carries aud, nonce, iat, consent_hash and verifies with the holder key', async () => {
+  const { issuer, holder, aud, consent, present } = await setup();
+  const presentation = await present();
+  const v = new SDJwtVcInstance({ hasher, hashAlg: 'sha-256', verifier: verifierFor(issuer.publicJwk), kbVerifier: verifierFor(holder.publicJwk) });
+  const r = await v.verify(presentation, {
+    disableStatusVerification: true, keyBindingNonce: NONCE, expectedKeyBindingAudience: aud, currentDate: Math.floor(NOW.getTime() / 1000),
+  });
+  assert.equal(r.kb.payload.aud, aud);
+  assert.equal(r.kb.payload.nonce, NONCE);
+  assert.equal(r.kb.payload.iat, Math.floor(NOW.getTime() / 1000));
+  assert.equal(r.kb.payload.consent_hash, consentHash(consent));
+  assert.equal(typeof r.kb.payload.sd_hash, 'string');
+  assert.equal(r.kb.header.typ, 'kb+jwt');
+});
+
+test('the key binding does not verify under another holder key', async () => {
+  const { issuer, aud, present } = await setup();
+  const other = await generateEd25519();
+  const v = new SDJwtVcInstance({ hasher, hashAlg: 'sha-256', verifier: verifierFor(issuer.publicJwk), kbVerifier: verifierFor(other.publicJwk) });
+  await assert.rejects(v.verify(await present(), { disableStatusVerification: true, keyBindingNonce: NONCE, expectedKeyBindingAudience: aud }));
+});
+
+test('no presentation without a consent signed by the holder', async () => {
+  const { present, consent, school, holderDid } = await setup();
+  await assert.rejects(present({ consent: 'not.a.consent' }));
+  await assert.rejects(present({ consent: '' }));
+  const { payload } = decodeJws(consent);
+  const forged = await signJws(payload, { typ: CONSENT_TYP, kid: didKeyKid(holderDid) }, school.privateJwk);
+  await assert.rejects(present({ consent: forged }), /signature invalid/);
+});
+
+test('a consent widened after signing is refused', async () => {
+  const { present, consent, holder, holderDid } = await setup();
+  const { payload } = decodeJws(consent);
+  const widened = await signJws({ ...payload, purpose: 'marketing' }, { typ: CONSENT_TYP, kid: didKeyKid(holderDid) }, holder.privateJwk);
+  await assert.rejects(present({ consent: widened }), /purpose/);
+});
+
+test('a consent for another school is refused', async () => {
+  const { present } = await setup();
+  const other = await generateEd25519();
+  await assert.rejects(present({ aud: didKeyFromJwk(other.publicJwk) }), /not for this school/);
+});
+
+test('a consent from another holder is refused', async () => {
+  const { present, aud } = await setup();
+  const other = await generateEd25519();
+  const consent = await signConsent({ holderDid: didKeyFromJwk(other.publicJwk), holderPrivateJwk: other.privateJwk, schoolDid: aud, now: NOW });
+  await assert.rejects(present({ consent }), /not given by this holder/);
+});
+
+test('an expired consent is refused', async () => {
+  const { present } = await setup();
+  await assert.rejects(present({ now: new Date('2027-04-01T00:00:01Z') }), /expired/);
+});
+
+test('a credential bound to another key is refused', async () => {
+  const { present, issuer } = await setup();
+  const other = await generateEd25519();
+  const { kid } = didDocument(ISSUER_DID, issuer.publicJwk);
+  const credential = await issueCredential({
+    certificate: cert, holderPublicJwk: other.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid,
+  });
+  await assert.rejects(present({ credential }), /not bound to this holder/);
+});
+
+test('a short nonce is refused', async () => {
+  const { present } = await setup();
+  await assert.rejects(present({ nonce: '123' }), /nonce/);
+});
+
+test('consent runs to the end of the academic year', async () => {
+  const { consent } = await setup();
+  const c = await verifyConsent(consent, { at: NOW });
+  assert.equal(c.valid_until, academicYearEnd(NOW).toISOString());
+  assert.equal(c.valid_until, '2027-03-31T23:59:59.000Z');
+  assert.equal(c.recheck_scope, 'status_only');
+  assert.equal(c.withdrawable, true);
+});
