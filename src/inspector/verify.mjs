@@ -1,6 +1,6 @@
 // Standalone verifier for an export bundle. It reads only the bundle, a public Sepolia RPC and a source of Bitcoin
 // block headers; it never contacts the platform or the school.
-import { sha256Hex } from '../shared/encoding.mjs';
+import { saltedCommitment, isSalt } from '../shared/commitment.mjs';
 import { jwkFromDidKey } from '../shared/keys.mjs';
 import { decodeJws, verifyJws } from '../shared/jws.mjs';
 import { entryHash } from '../log/chain.mjs';
@@ -32,12 +32,14 @@ async function checkSignature(b) {
   }
 }
 
-/** 2. The log entry commits to this record and its hash recomputes. */
+/** 2. The log entry commits to this record under its salt, and the entry hash recomputes. */
 function checkEntry(b) {
   try {
     const e = b.entry;
     if (e.entry_type !== b.record_type) return fail('entry', `log entry type ${e.entry_type} is not ${b.record_type}`);
-    if (e.commitment !== sha256Hex(b.record)) return fail('entry', 'log entry commitment is not the SHA-256 of the record');
+    if (b.salt === undefined || b.salt === null) return fail('entry', 'bundle has no salt for the record');
+    if (!isSalt(b.salt)) return fail('entry', 'bundle salt is not 32 bytes of hex');
+    if (e.commitment !== saltedCommitment(b.record, b.salt)) return fail('entry', 'commitment does not recompute from the record and its salt');
     if (entryHash(e.prev_hash, e.entry_type, e.commitment, e.ts) !== e.entry_hash) return fail('entry', 'entry_hash does not recompute');
     return pass('entry', `entry ${e.seq} recomputes`);
   } catch (e) {

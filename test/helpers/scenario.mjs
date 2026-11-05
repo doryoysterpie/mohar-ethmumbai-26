@@ -11,6 +11,7 @@ import { openLogStore } from '../../src/log/store.mjs';
 import { createLog } from '../../src/log/service.mjs';
 import { createLogServer } from '../../src/log/server.mjs';
 import { commitRecord } from '../../src/log/client.mjs';
+import { newSalt } from '../../src/shared/commitment.mjs';
 import { otsBitcoinAttestations } from '../../src/anchor/ots.mjs';
 import { world } from './world.mjs';
 import { fakeRpc } from './fake-rpc.mjs';
@@ -41,9 +42,11 @@ export async function scenario(options = {}) {
   const schoolUrl = await listen(schoolServer);
 
   const presentation = await w.present({ nonce: school.nonce().nonce, aud: school.did });
-  await commitRecord({ logUrl, entryType: 'consent', record: w.consent });
-  await commitRecord({ logUrl, entryType: 'presentation', record: presentation });
-  const r = await school.present({ presentation, consent: w.consent });
+  const consentSalt = newSalt();
+  const presentationSalt = newSalt();
+  await commitRecord({ logUrl, entryType: 'consent', record: w.consent, salt: consentSalt });
+  await commitRecord({ logUrl, entryType: 'presentation', record: presentation, salt: presentationSalt });
+  const r = await school.present({ presentation, consent: w.consent, presentation_salt: presentationSalt });
   if (!r.ok) throw new Error(`scenario presentation refused: ${r.refusal} ${r.detail}`);
   w.now = new Date('2027-01-01T00:00:00.000Z');
   const [recheck] = await school.recheck();
@@ -78,7 +81,7 @@ export async function scenario(options = {}) {
   };
 
   return {
-    w, school, log, rpc, dir, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers,
+    w, school, schoolStore, log, rpc, dir, consentSalt, presentationSalt, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers,
     fetchBundle, destroyServices, close: async () => { await destroyServices(); rpc.close(); },
   };
 }

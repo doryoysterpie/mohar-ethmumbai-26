@@ -6,6 +6,7 @@ import { sepolia } from 'viem/chains';
 import { generateEd25519 } from '../src/shared/keys.mjs';
 import { decodeJws, signJws } from '../src/shared/jws.mjs';
 import { sha256Hex } from '../src/shared/encoding.mjs';
+import { newSalt } from '../src/shared/commitment.mjs';
 import { verifyBundle } from '../src/inspector/verify.mjs';
 import { otsProof } from './helpers/ots-proof.mjs';
 import { scenario } from './helpers/scenario.mjs';
@@ -39,7 +40,7 @@ test('a forged receipt fails the signature check by name, and only that check', 
   assert.match(r.signature.detail, /school signature invalid/);
   // The forged record is not the one the log committed to.
   assert.equal(r.entry.result, 'fail');
-  assert.match(r.entry.detail, /commitment is not the SHA-256 of the record/);
+  assert.match(r.entry.detail, /commitment does not recompute from the record and its salt/);
   for (const c of ['merkle', 'sepolia', 'ots']) assert.equal(r[c].result, 'pass', c);
 });
 
@@ -120,6 +121,27 @@ test('a tampered OTS proof fails the ots check by name, and only that check', as
     const real = await (await import('../src/anchor/ots.mjs')).otsBitcoinAttestations(Buffer.from(base.ots.proof, 'base64'), base.batch.root);
     for (const a of real) s.headers.set(a.height, { merkleroot: Buffer.from(a.msg, 'hex').reverse().toString('hex'), time: 1_793_000_000 });
   }
+});
+
+test('the verifier passes with the correct salt and fails with the named reason on a wrong or missing salt', async () => {
+  const right = await verifyBundle(clone(), opts());
+  assert.equal(right.checks[1].result, 'pass');
+  assert.equal(right.ok, true);
+  const wrong = clone();
+  wrong.salt = newSalt();
+  const rw = await results(wrong);
+  assert.equal(rw.entry.result, 'fail');
+  assert.match(rw.entry.detail, /commitment does not recompute from the record and its salt/);
+  for (const c of ['signature', 'merkle', 'sepolia', 'ots']) assert.equal(rw[c].result, 'pass', c);
+  const missing = clone();
+  delete missing.salt;
+  const rm = await results(missing);
+  assert.equal(rm.entry.result, 'fail');
+  assert.match(rm.entry.detail, /bundle has no salt for the record/);
+  const malformed = clone();
+  malformed.salt = 'AB'.repeat(32);
+  assert.match((await results(malformed)).entry.detail, /bundle salt is not 32 bytes of hex/);
+  assert.equal((await verifyBundle(missing, opts())).ok, false);
 });
 
 test('a pending OTS proof is reported as pending, not pass or fail', async () => {

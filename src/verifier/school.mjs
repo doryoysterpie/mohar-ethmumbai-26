@@ -236,15 +236,17 @@ export function createSchool(config) {
       if (!r && !rc) return { ok: false, code: 404, error: 'no receipt or re-check with this id' };
       if (!config.logUrl) return { ok: false, code: 503, error: 'no log service configured' };
       const record = r ? r.receipt : rc.recheck;
+      const salt = r ? r.receipt_salt : rc.recheck_salt;
+      const recordType = r ? 'receipt' : 'recheck';
       let proof;
       try {
-        proof = await fetchProof({ logUrl: config.logUrl, commitment: sha256Hex(record), fetch: config.logFetch });
+        proof = await fetchProof({ logUrl: config.logUrl, commitment: saltedCommitment(record, salt), entryType: recordType, fetch: config.logFetch });
       } catch (e) {
         return { ok: false, code: 502, error: `log service unavailable: ${e.message}` };
       }
       if (!proof) return { ok: false, code: 409, error: 'the log has no entry for this record' };
       if (!proof.batch) return { ok: false, code: 409, error: 'the record is not in a closed batch yet' };
-      return { ok: true, bundle: buildBundle({ record, recordType: r ? 'receipt' : 'recheck', proof }) };
+      return { ok: true, bundle: buildBundle({ record, salt, recordType, proof }) };
     },
 
     /** Latest receipt and re-check for a holder, or null. */

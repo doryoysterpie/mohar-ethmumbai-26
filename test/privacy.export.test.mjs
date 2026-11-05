@@ -54,7 +54,7 @@ test('a bundle carries no personal data, no presentation and no consent', async 
   try {
     for (const id of [s.receipt.receipt_id, s.recheck.recheck_id]) {
       const bundle = await (await s.fetchBundle(id)).json();
-      assert.deepEqual(Object.keys(bundle).sort(), ['batch', 'entry', 'format', 'merkle_path', 'ots', 'record', 'record_type', 'sepolia']);
+      assert.deepEqual(Object.keys(bundle).sort(), ['batch', 'entry', 'format', 'merkle_path', 'ots', 'record', 'record_type', 'salt', 'sepolia']);
       const decoded = JSON.parse(Buffer.from(bundle.record.split('.')[1], 'base64url'));
       const text = `${JSON.stringify(bundle)}\n${JSON.stringify(decoded)}`;
       for (const v of PERSONAL) assert.ok(!text.includes(v), `"${v}" in the ${bundle.record_type} bundle`);

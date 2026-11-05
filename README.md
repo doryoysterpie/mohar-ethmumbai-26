@@ -94,12 +94,12 @@ node --env-file=.env bin/log.mjs check --anchors   # also compare each stored ro
 
 ## Inspector
 
-An export bundle holds the signed receipt or re-check receipt, its log entry, its Merkle path, the batch root, the Sepolia transaction and the OpenTimestamps proof. It holds no presentation, no consent and no personal data.
+An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction and the OpenTimestamps proof. It holds no presentation, no consent and no personal data.
 
 `bin/inspect.mjs` checks a bundle on its own, with no connection to the school or the log service:
 
 1. signature: the record is signed by the school did:key it names, resolved from the identifier itself;
-2. entry: the log entry commits to the SHA-256 of the record and its `entry_hash` recomputes;
+2. entry: the log entry's commitment recomputes from the record and its salt, and its `entry_hash` recomputes;
 3. merkle: the entry's path leads to the batch root;
 4. sepolia: the transaction's calldata on Sepolia is the batch root, read through an RPC that reports chain 11155111;
 5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`.
