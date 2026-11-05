@@ -14,6 +14,9 @@ export const STATUS_LIST_URI = `${SITE_BASE}/${STATUS_LIST_PATH}`;
 
 export const ISSUING_BODY = 'CBSE (simulated)';
 
+/** The only claims allowed in the always-visible part of an eligibility credential. */
+export const VISIBLE_CLAIMS = ['iss', 'sub', 'vct', 'iat', 'status', 'cnf', '_sd', '_sd_alg'];
+
 /** Claims that are selectively disclosable, in credential order. */
 export const DISCLOSABLE = [
   'qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'name',
