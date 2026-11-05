@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { generatePrivateKey } from 'viem/accounts';
 import { sha256Hex } from '../src/shared/encoding.mjs';
 import { firstBreak, GENESIS, entryHash } from '../src/log/chain.mjs';
@@ -282,4 +285,48 @@ test('the same commitment under two entry types gives two proofs, each to its ow
   } finally {
     server.close();
   }
+});
+
+test('deleting the final unbatched entry and the head checkpoint, then restarting, is refused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mohar-head-'));
+  const file = path.join(dir, 'log.sqlite');
+  try {
+    let store = openLogStore(file);
+    let t = Date.UTC(2026, 10, 6, 10, 0, 0);
+    for (let i = 0; i < 3; i += 1) store.append('receipt', sha256Hex(`r${i}`), new Date((t += 1000)).toISOString());
+    store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+    store.db.prepare('DELETE FROM head').run();
+    store.close();
+    store = openLogStore(file);
+    assert.deepEqual(logProblems(store), ['head checkpoint is missing']);
+    assert.throws(() => store.append('receipt', sha256Hex('replacement'), new Date(t + 5000).toISOString()), /head checkpoint is missing/);
+    assert.equal(store.db.prepare('SELECT count(*) AS n FROM entries WHERE seq = 2').get().n, 0);
+    store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('with a head key, a checkpoint rewritten without the key is refused', () => {
+  const key = 'cd'.repeat(32);
+  const store = openLogStore(':memory:', { headKey: key });
+  let t = Date.UTC(2026, 10, 6, 10, 0, 0);
+  for (let i = 0; i < 3; i += 1) store.append('receipt', sha256Hex(`r${i}`), new Date((t += 1000)).toISOString());
+  store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+  store.db.prepare('UPDATE head SET seq = 1, entry_hash = (SELECT entry_hash FROM entries WHERE seq = 1)').run();
+  assert.deepEqual(logProblems(store), ['head checkpoint is not authenticated by the head key']);
+  assert.throws(() => store.append('receipt', sha256Hex('replacement'), new Date(t + 5000).toISOString()), /not authenticated/);
+});
+
+test('adopting a head checkpoint is explicit, one-time, and refused over a broken chain', () => {
+  const store = openLogStore(':memory:');
+  store.append('receipt', sha256Hex('a'), '2026-11-06T10:00:00.000Z');
+  store.append('receipt', sha256Hex('b'), '2026-11-06T10:00:01.000Z');
+  assert.throws(() => store.adoptHead(), /already has a valid head checkpoint/);
+  store.db.prepare('DELETE FROM head').run();
+  store.db.prepare('UPDATE entries SET ts = ? WHERE seq = 0').run('2026-01-01T00:00:00.000Z');
+  assert.throws(() => store.adoptHead(), /chain is broken/);
+  store.db.prepare('UPDATE entries SET ts = ? WHERE seq = 0').run('2026-11-06T10:00:00.000Z');
+  assert.deepEqual(store.adoptHead().seq, 1);
+  assert.deepEqual(logProblems(store), []);
 });

@@ -5,8 +5,9 @@ import { merkleRoot } from './merkle.mjs';
  * Checks the whole stored log: the hash chain from the genesis constant, the tail against the head checkpoint,
  * and every closed batch (consecutive, non-overlapping, sizes right, root recomputed from its entries).
  * Returns the problems found; an empty list means the stored log is consistent with itself.
- * It cannot see a change made consistently to the entries, the head and the batches together: comparing
- * stored roots with their external anchors (see `check --anchors`) covers that for anchored batches.
+ * With a head key, the checkpoint cannot be rewritten without that key; without one, a change made consistently to
+ * the entries, the head and the batches together is visible only by comparing stored roots with their external
+ * anchors (see `check --anchors`), for anchored batches.
  * @param {ReturnType<typeof import('./store.mjs').openLogStore>} store
  * @returns {string[]}
  */
@@ -18,7 +19,8 @@ export function logProblems(store) {
 
   const head = store.head();
   const tail = entries.at(-1) ?? null;
-  if ((head === null) !== (tail === null)) problems.push('head checkpoint and entries disagree on whether the log is empty');
+  problems.push(...store.headProblems());
+  if (head === null && tail === null) { /* empty log */ } else if (head === null) { /* reported by headProblems */ } else if (tail === null) problems.push('head checkpoint names an entry but the log is empty');
   else if (head && (head.seq !== tail.seq || head.entry_hash !== tail.entry_hash)) {
     problems.push(`tail is seq ${tail.seq} but the head checkpoint is seq ${head.seq}`);
   }
