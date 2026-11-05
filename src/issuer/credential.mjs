@@ -57,7 +57,7 @@ export function assertCertificate(certificate) {
  *   statusIndex: number,
  *   issuerPrivateJwk: import('../shared/keys.mjs').Ed25519Jwk,
  *   kid: string,
- *   issuerDid?: string, vct?: string, statusUri?: string, iat?: number, certificateSalt?: string,
+ *   issuerDid?: string, vct?: string, statusUri?: string, iat?: number,
  * }} p
  * @returns {Promise<string>} compact SD-JWT with all disclosures
  */
@@ -65,7 +65,9 @@ export async function issueCredential(p) {
   assertCertificate(p.certificate);
   const c = p.certificate;
   const holder = publicOf(p.holderPublicJwk);
-  const certificateSalt = p.certificateSalt ?? newSalt();
+  // The certificate salt is always fresh from the CSPRNG; a caller cannot supply one.
+  if ('certificateSalt' in p || 'certificate_salt' in p) throw new Error('the certificate salt is made at issuance and cannot be supplied');
+  const certificateSalt = newSalt();
   const sdjwt = new SDJwtVcInstance({
     signer: signerFor(p.issuerPrivateJwk), signAlg: 'EdDSA', hasher, hashAlg: 'sha-256', saltGenerator,
   });
