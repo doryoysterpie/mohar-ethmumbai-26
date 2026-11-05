@@ -34,7 +34,7 @@ function tokenMatches(given, expected) {
 /**
  * HTTP service for a school:
  *   GET  /nonce                 single-use nonce for a presentation
- *   POST /present               { presentation, consent } -> 200 receipt, or 422 typed refusal
+ *   POST /present               { presentation, consent, presentation_salt } -> 200 receipt, 422 typed refusal, 400 without a valid salt
  *   GET  /status/{holder_did}   latest receipt and re-check summary; requires the staff token
  *   POST /recheck               term status check of every active receipt; requires the staff token
  *   GET  /export/{receipt_id}   not in this version (501)
@@ -58,7 +58,13 @@ export function createServer(school, options = {}) {
       if (req.method === 'POST' && url.pathname === '/present') {
         if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'content-type must be application/json' });
         const body = await readJson(req);
-        const out = await school.present({ presentation: body?.presentation, consent: body?.consent });
+        let out;
+        try {
+          out = await school.present({ presentation: body?.presentation, consent: body?.consent, presentation_salt: body?.presentation_salt });
+        } catch (e) {
+          if (e instanceof TypeError) return send(res, 400, { error: e.message });
+          throw e;
+        }
         return send(res, out.ok ? 200 : 422, out);
       }
       if (req.method === 'GET' && parts[0] === 'status' && parts.length === 2) {

@@ -11,6 +11,7 @@ import { assertCredentialShape, assertDisclosures } from '../issuer/shape.mjs';
 import { resolveIssuerKey } from '../issuer/did-web.mjs';
 import { verifyConsent, didKeyKid } from '../holder/consent.mjs';
 import { commitRecord } from '../log/client.mjs';
+import { newSalt, isSalt, saltedCommitment } from '../shared/commitment.mjs';
 import { nextTermBoundary } from './calendar.mjs';
 
 export const RECEIPT_TYP = 'receipt+jwt';
@@ -56,13 +57,13 @@ export function createSchool(config) {
   const kbMaxAge = config.keyBindingMaxAgeSeconds ?? 300;
   const seconds = (d) => Math.floor(d.getTime() / 1000);
 
-  async function log(entryType, record) {
-    if (!config.logUrl) return { commitment: sha256Hex(record), posted: false };
+  async function log(entryType, record, salt) {
+    if (!config.logUrl) return { commitment: saltedCommitment(record, salt), posted: false };
     try {
-      const { commitment } = await commitRecord({ logUrl: config.logUrl, entryType, record, fetch: config.logFetch });
+      const { commitment } = await commitRecord({ logUrl: config.logUrl, entryType, record, salt, fetch: config.logFetch });
       return { commitment, posted: true };
     } catch (e) {
-      return { commitment: sha256Hex(record), posted: false, error: e.message };
+      return { commitment: saltedCommitment(record, salt), posted: false, error: e.message };
     }
   }
 
@@ -165,9 +166,11 @@ export function createSchool(config) {
 
     /**
      * Verifies a presentation. Returns a signed receipt, or a typed refusal (stored, with no receipt).
-     * @param {{ presentation: string, consent: string }} body
+     * `presentation_salt` is the teacher's salt for the presentation commitment; the school stores it with the presentation.
+     * @param {{ presentation: string, consent: string, presentation_salt: string }} body
      */
-    async present({ presentation, consent }) {
+    async present({ presentation, consent, presentation_salt: presentationSalt }) {
+      if (!isSalt(presentationSalt)) throw new TypeError('presentation_salt must be 32 bytes as 64 lowercase hex characters');
       const now = clock();
       const presentationHash = sha256Hex(typeof presentation === 'string' ? presentation : '');
       let verified;
@@ -203,12 +206,15 @@ export function createSchool(config) {
         recheck_due: recheckDue.toISOString(),
       };
       const receiptJws = await signJws(receipt, { typ: RECEIPT_TYP, kid }, config.schoolPrivateJwk);
+      const receiptSalt = newSalt();
       store.saveReceipt({
         receipt_id: receiptId,
         holder_did: credential.payload.sub,
         presentation,
+        presentation_salt: presentationSalt,
         consent,
         receipt: receiptJws,
+        receipt_salt: receiptSalt,
         status_ref: JSON.stringify({ iss: credential.payload.iss, status: credential.payload.status }),
         issuer: credential.payload.iss,
         status_result: status.result,
@@ -216,7 +222,7 @@ export function createSchool(config) {
         recheck_due: receipt.recheck_due,
         valid_until: c.valid_until,
       });
-      return { ok: true, receipt_id: receiptId, receipt: receiptJws, status_reason: status.reason, log: await log('receipt', receiptJws) };
+      return { ok: true, receipt_id: receiptId, receipt: receiptJws, status_reason: status.reason, log: await log('receipt', receiptJws, receiptSalt) };
     },
 
     /** Latest receipt and re-check for a holder, or null. */
@@ -259,11 +265,12 @@ export function createSchool(config) {
           alert,
         };
         const jws = await signJws(recheck, { typ: RECHECK_TYP, kid }, config.schoolPrivateJwk);
+        const recheckSalt = newSalt();
         store.saveRecheck({
-          recheck_id: recheck.recheck_id, receipt_id: r.receipt_id, recheck: jws, status_result: status.result,
+          recheck_id: recheck.recheck_id, receipt_id: r.receipt_id, recheck: jws, recheck_salt: recheckSalt, status_result: status.result,
           checked_at: recheck.status_checked_at, next_recheck_due: recheck.next_recheck_due, alert: alert ? 1 : 0,
         });
-        out.push({ ...recheck, recheck: jws, status_reason: status.reason, log: await log('recheck', jws) });
+        out.push({ ...recheck, recheck: jws, status_reason: status.reason, log: await log('recheck', jws, recheckSalt) });
       }
       return out;
     },
