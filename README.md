@@ -25,6 +25,34 @@ node bin/issuer.mjs issue fixtures/certificates/teacher-a.json <holder did:key>
 
 A status check returns `not_revoked`, `revoked` or `unknown`. `unknown` covers a list that cannot be fetched, is not signed by the credential's issuer, or was published for another address.
 
+## Log
+
+The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is a SHA-256 hex string. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry.
+
+A batch closes over every waiting entry. Its root is a Merkle tree over the entries: leaves are `SHA-256(0x00 || entry_hash)`, inner nodes `SHA-256(0x01 || left || right)`, and the tree is padded to a power of two with `SHA-256(0x02)`, which no entry can produce. The root is anchored twice:
+
+- Ethereum Sepolia: a zero-value transaction from the operator address to itself whose calldata is the 32-byte root. The transaction is signed once and sent to each configured RPC in turn.
+- Bitcoin, through OpenTimestamps: the root is stamped on the public calendars. The proof reads `pending` until a calendar returns a Bitcoin block header attestation, then `complete` with that block height. Checking the attestation against Bitcoin is the verifier's job.
+
+The two anchors are reported separately. If one fails, the batch stays closed, the failure is recorded on it, and `anchor` retries.
+
+```
+node --env-file=.env bin/log.mjs serve     # PORT (default 8081), batch every MOHAR_BATCH_SECONDS (default 3600)
+node --env-file=.env bin/log.mjs batch     # close and anchor a batch now
+node --env-file=.env bin/log.mjs anchor    # anchor batches still missing an anchor
+node --env-file=.env bin/log.mjs upgrade   # ask the calendars for Bitcoin attestations
+node bin/log.mjs check                     # re-check the hash chain
+```
+
+`.env` (not tracked) holds `MOHAR_SEPOLIA_KEY` (operator key, `0x…`), `MOHAR_SEPOLIA_RPCS` (comma-separated), and `MOHAR_ADMIN_TOKEN`. Set `MOHAR_OTS=off` to skip OpenTimestamps.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/commit` | 201 new entry, 200 existing entry, 400 for anything that is not exactly `{ entry_type, commitment }` |
+| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open |
+| GET | `/batches/{id}` | batch summary |
+| POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
+
 ## Licence
 
 Apache-2.0. See `LICENSE`.
