@@ -57,7 +57,7 @@ test('a wrong Merkle path fails the merkle check by name, and only that check', 
   b.merkle_path.siblings[0] = sha256Hex('not the sibling');
   const r = await results(b);
   assert.equal(r.merkle.result, 'fail');
-  assert.match(r.merkle.detail, /Merkle path leads to a different root/);
+  assert.match(r.merkle.detail, /lead to a different root/);
   for (const c of ['signature', 'entry', 'sepolia', 'ots']) assert.equal(r[c].result, 'pass', c);
 });
 
@@ -164,4 +164,43 @@ test('a bundle that is not a Mohar bundle fails every check', async () => {
   const r = await verifyBundle({ format: 'other' }, opts());
   assert.equal(r.ok, false);
   assert.ok(r.checks.every((c) => c.result === 'fail'));
+});
+
+test('each exported provenance field is bound: a change to any one fails with a named reason', async () => {
+  const cases = {
+    'entry.seq': [(b) => { b.entry.seq += 1; }, 'merkle', /entry seq is not its position/],
+    'batch.batch_id': [(b) => { b.batch.batch_id += 1; }, 'merkle', /lead to a different root/],
+    'batch.first_seq': [(b) => { b.batch.first_seq += 1; b.entry.seq += 1; }, 'merkle', /lead to a different root/],
+    'batch.size and merkle_path.size': [(b) => { b.batch.size -= 1; b.merkle_path.size -= 1; }, 'merkle', /lead to a different root|not a real entry/],
+    'batch.closed_at': [(b) => { b.batch.closed_at = '2026-01-01T00:00:00.000Z'; }, 'merkle', /lead to a different root/],
+    'sepolia.block_number': [(b) => { b.sepolia.block_number += 1; }, 'sepolia', /bundle says block/],
+  };
+  for (const [field, [mutate, check, reason]] of Object.entries(cases)) {
+    const b = clone();
+    mutate(b);
+    const r = await results(b);
+    assert.equal(r[check].result, 'fail', field);
+    assert.match(r[check].detail, reason, field);
+    assert.equal((await verifyBundle(b, opts())).ok, false, field);
+  }
+});
+
+test('the Sepolia check uses one RPC for chain id and transaction: a non-Sepolia fallback is never trusted', async () => {
+  const { fakeRpc } = await import('./helpers/fake-rpc.mjs');
+  const empty = await fakeRpc();
+  const mainnet = await fakeRpc({ chainId: 1 });
+  try {
+    // The non-Sepolia RPC holds the bundle's transaction (same raw bytes); the Sepolia RPC does not.
+    for (const [hash, t] of s.rpc.state.txs) mainnet.state.txs.set(hash, t);
+    const r = await verifyBundle(clone(), { rpcUrls: [empty.url, mainnet.url], bitcoinHeader: s.bitcoinHeader });
+    assert.equal(r.checks[3].result, 'fail');
+    assert.match(r.checks[3].detail, /not found on a Sepolia RPC/);
+    assert.match(r.checks[3].detail, /chain 1, not Sepolia/);
+    assert.equal(r.ok, false);
+    const fallback = await verifyBundle(clone(), { rpcUrls: [empty.url, s.rpc.url], bitcoinHeader: s.bitcoinHeader });
+    assert.equal(fallback.checks[3].result, 'pass');
+  } finally {
+    empty.close();
+    mainnet.close();
+  }
 });

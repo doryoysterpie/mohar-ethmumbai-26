@@ -100,8 +100,8 @@ An export bundle holds the signed receipt or re-check receipt, its salt, its log
 
 1. signature: the record is signed by the school did:key it names, resolved from the identifier itself;
 2. entry: the log entry's commitment recomputes from the record and its salt, and its `entry_hash` recomputes;
-3. merkle: the entry's path leads to the batch root;
-4. sepolia: the transaction's calldata on Sepolia is the batch root, read through an RPC that reports chain 11155111;
+3. merkle: the entry's path and the batch header (id, first seq, size, closing time) recompute the batch root, and the entry's seq is its position in the batch;
+4. sepolia: from one RPC that reports chain 11155111 and has the transaction: the transaction succeeded, its calldata is the batch root, and its block is the block the bundle names;
 5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`.
 
 ```
