@@ -13,6 +13,7 @@
     "test": "node --test test/privacy.*.test.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@owf/token-status-list": "0.7.0",
     "@sd-jwt/core": "0.24.3",
     "@sd-jwt/sd-jwt-vc": "0.24.3",
     "better-sqlite3": "13.0.3",

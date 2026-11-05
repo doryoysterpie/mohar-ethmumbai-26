@@ -1,0 +1,8 @@
+{
+  "notice": "SIMULATED issuance plan for the fixture certificates.",
+  "credentials": [
+    { "certificate": "certificates/teacher-a.json", "status_index": 0, "revoked": false },
+    { "certificate": "certificates/teacher-b.json", "status_index": 1, "revoked": true },
+    { "certificate": "certificates/teacher-c.json", "status_index": 2, "revoked": false }
+  ]
+}
