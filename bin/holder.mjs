@@ -4,7 +4,8 @@
 //   consent <name> <school-did>                                   prints a signed consent record
 //   present <name> <credential-file> <consent-file> <school-did> <nonce>
 //                                                                 prints a presentation; posts the consent and presentation
-//                                                                 commitments to the log service at MOHAR_LOG_URL when set
+//                                                                 commitments to the log service at MOHAR_LOG_URL when set;
+//                                                                 verifies the credential first (MOHAR_SITE_DIR: local did.json)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,8 +47,13 @@ if (cmd === 'keygen') {
   if (!nonce) throw new Error('usage: holder present <name> <credential-file> <consent-file> <school-did> <nonce>');
   const key = readKey(name);
   const consent = readText(consentFile);
+  // MOHAR_SITE_DIR reads the issuer's did.json from a local copy of the site instead of fetching it.
+  const siteDir = process.env.MOHAR_SITE_DIR;
+  const didFetch = siteDir
+    ? async () => ({ status: 200, json: async () => JSON.parse(fs.readFileSync(path.join(siteDir, 'did.json'), 'utf8')) })
+    : undefined;
   const presentation = await buildPresentation({
-    credential: readText(credFile), consent, holderPrivateJwk: key.privateJwk, nonce, aud: schoolDid,
+    credential: readText(credFile), consent, holderPrivateJwk: key.privateJwk, nonce, aud: schoolDid, didFetch,
   });
   process.stdout.write(`${presentation}\n`);
   const logUrl = process.env.MOHAR_LOG_URL;
