@@ -84,7 +84,8 @@ export async function issueCredential(p) {
  * Verifies the issuer signature of an SD-JWT VC (or a presentation of one) against the issuer's did:web document,
  * and returns the issuer-signed claims with the disclosed claims applied. Status is checked separately.
  * @param {string} encoded
- * @param {{ didFetch?: import('web-did-resolver').WebDidFetch, expectedIssuer?: string }} [options]
+ * @param {{ didFetch?: import('web-did-resolver').WebDidFetch, expectedIssuer?: string, currentDate?: number, skewSeconds?: number }} [options]
+ *   currentDate (seconds) and skewSeconds are passed to the iat/nbf/exp checks; the default is the system clock and no skew
  * @returns {Promise<{ payload: Record<string, any>, header: Record<string, any> }>}
  */
 export async function verifyCredential(encoded, options = {}) {
@@ -96,6 +97,11 @@ export async function verifyCredential(encoded, options = {}) {
   if (typeof header.kid !== 'string') throw new Error('credential header has no kid');
   const issuerKey = await resolveIssuerKey(iss, header.kid, { fetch: options.didFetch });
   const sdjwt = new SDJwtVcInstance({ verifier: verifierFor(issuerKey), hasher, hashAlg: 'sha-256' });
-  const result = await sdjwt.verify(encoded, { disableStatusVerification: true, allowedIssuerAlgorithms: ['EdDSA'] });
+  const result = await sdjwt.verify(encoded, {
+    disableStatusVerification: true,
+    allowedIssuerAlgorithms: ['EdDSA'],
+    ...(options.currentDate !== undefined ? { currentDate: options.currentDate } : {}),
+    ...(options.skewSeconds !== undefined ? { skewSeconds: options.skewSeconds } : {}),
+  });
   return { payload: result.payload, header: result.header ?? {} };
 }

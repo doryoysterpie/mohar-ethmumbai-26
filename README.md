@@ -41,6 +41,28 @@ MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent
 
 The consent record follows the shape of a consent record under India's Digital Personal Data Protection Rules, 2025. Mohar is not a registered Consent Manager and does not claim to be. Withdrawal is recorded as available; a withdrawal endpoint is not in this version.
 
+## School
+
+The school issues single-use nonces and verifies each presentation: the issuer signature and disclosure digests against the issuer's did:web document, the key binding against the credential's holder key (audience, nonce, age under five minutes, consent hash), that the visible credential and every disclosed value match the eligibility-credential profile exactly, the consent record (signed by the holder, for this school, valid now, with ISO 8601 UTC times), that the consent covers the claims the receipt needs and the disclosures equal the consent, and the credential's status. Times on the credential and key binding may run up to 60 seconds ahead of the school's clock. On success it signs a receipt with its did:key; the receipt carries the presentation hash, certificate commitment, consent hash, issuer, status result, the disclosed eligibility claims (no name, no holder identifier), purpose, time and the next term check date. On failure it returns one of `issuer_signature_invalid`, `key_binding_invalid`, `nonce_stale`, `consent_mismatch`, `status_revoked`, `scope_insufficient`, records the presentation hash and the reason, and signs nothing.
+
+At each term boundary (1 October and 1 January by default; set `MOHAR_TERM_BOUNDARIES=MM-DD,MM-DD`) the school re-reads the status of every receipt whose consent is still valid and signs a re-check receipt. `alert` is true when the result is `revoked` or differs from the previous result.
+
+```
+node bin/school.mjs keygen                                   # prints the school's did:key
+PORT=8080 MOHAR_LOG_URL=... MOHAR_ADMIN_TOKEN=... node bin/school.mjs serve
+node bin/school.mjs recheck                                  # term check against the local store
+```
+
+| Method | Path | Result |
+|---|---|---|
+| GET | `/nonce` | `{ nonce, expires_at }`, valid for ten minutes, usable once |
+| POST | `/present` | `{ presentation, consent }` → 200 with the receipt, or 422 with the refusal |
+| GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert; staff token |
+| POST | `/recheck` | term check; staff token |
+| GET | `/export/{receipt_id}` | not in this version |
+
+Staff routes take `authorization: Bearer <MOHAR_ADMIN_TOKEN>` and are off when the token is not set. Receipt and re-check commitments go to the log service when `MOHAR_LOG_URL` is set.
+
 ## Licence
 
 Apache-2.0. See `LICENSE`.
