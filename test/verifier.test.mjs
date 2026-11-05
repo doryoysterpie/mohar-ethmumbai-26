@@ -15,7 +15,7 @@ const receiptOf = (r) => decodeJws(r.receipt).payload;
 test('issuer-signature failure yields a refusal and no receipt', async () => {
   const w = await world();
   const forger = await generateEd25519();
-  const presentation = await w.present({ credential: await w.credential(0, forger.privateJwk) });
+  const presentation = await w.rawPresent({ credential: await w.credential(0, forger.privateJwk) });
   const r = await w.school.present({ presentation, consent: w.consent });
   assert.equal(r.ok, false);
   assert.equal(r.refusal, 'issuer_signature_invalid');

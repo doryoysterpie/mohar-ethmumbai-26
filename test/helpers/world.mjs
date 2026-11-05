@@ -1,12 +1,14 @@
 // A simulated issuer, teacher and school wired together in memory, for tests.
 import fs from 'node:fs';
 import http from 'node:http';
+import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { generateEd25519, didKeyFromJwk, signerFor } from '../../src/shared/keys.mjs';
+import { sha256Hex } from '../../src/shared/encoding.mjs';
 import { didDocument } from '../../src/issuer/did-web.mjs';
-import { issueCredential } from '../../src/issuer/credential.mjs';
+import { issueCredential, hasher } from '../../src/issuer/credential.mjs';
 import { buildStatusList } from '../../src/issuer/status-list.mjs';
 import { ISSUER_DID, STATUS_LIST_URI } from '../../src/issuer/profile.mjs';
-import { signConsent } from '../../src/holder/consent.mjs';
+import { signConsent, CONSENT_SCOPE } from '../../src/holder/consent.mjs';
 import { buildPresentation } from '../../src/holder/presentation.mjs';
 import { openStore } from '../../src/verifier/store.mjs';
 import { createSchool } from '../../src/verifier/school.mjs';
@@ -57,7 +59,15 @@ export async function world({ logUrl } = {}) {
     nonce: over.nonce ?? w.school.nonce().nonce,
     aud: over.aud ?? w.school.did,
     now: w.now,
+    didFetch,
   });
+  /** A presentation built directly with the library, skipping the teacher's own checks (for hostile inputs). */
+  w.rawPresent = async ({ credential, consent = w.consent, claims = CONSENT_SCOPE, nonce, aud = w.school.did, signer = holder.privateJwk } = {}) => {
+    const sdjwt = new SDJwtVcInstance({ hasher, hashAlg: 'sha-256', kbSigner: signerFor(signer), kbSignAlg: 'EdDSA' });
+    return sdjwt.present(credential ?? await w.credential(0), Object.fromEntries(claims.map((c) => [c, true])), {
+      kb: { payload: { aud, nonce: nonce ?? w.school.nonce().nonce, iat: Math.floor(w.now.getTime() / 1000), consent_hash: sha256Hex(consent) } },
+    });
+  };
   w.receiptCount = () => w.store.db.prepare('SELECT count(*) AS n FROM receipts').get().n;
   return w;
 }
