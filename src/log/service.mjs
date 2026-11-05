@@ -1,4 +1,5 @@
-import { assertCommitment, firstBreak } from './chain.mjs';
+import { assertCommitment, ENTRY_TYPES } from './chain.mjs';
+import { logProblems } from './integrity.mjs';
 import { merkleRoot, merklePath } from './merkle.mjs';
 import { otsStamp, otsUpgrade, otsState } from '../anchor/ots.mjs';
 import { anchorRoot } from '../anchor/sepolia.mjs';
@@ -19,6 +20,12 @@ export function createLog(config) {
   const stamp = config.stamp ?? otsStamp;
   const upgrade = config.upgrade ?? otsUpgrade;
   const anchor = config.anchor ?? anchorRoot;
+
+  /** Throws unless the whole stored log is consistent (chain, head checkpoint, every closed batch). */
+  function assertConsistent(what) {
+    const problems = logProblems(store);
+    if (problems.length) throw new Error(`the stored log is inconsistent (${problems.join('; ')}); ${what}`);
+  }
 
   async function anchorSepolia(batchId, root) {
     if (!config.sepolia) return store.setSepolia(batchId, { error: 'Sepolia anchoring is not configured' });
@@ -56,8 +63,7 @@ export function createLog(config) {
     async closeBatch() {
       const entries = store.unbatched();
       if (entries.length === 0) return null;
-      const prev = entries[0].seq === 0 ? null : store.db.prepare('SELECT seq, entry_hash FROM entries WHERE seq = ?').get(entries[0].seq - 1);
-      if (firstBreak(entries, prev) !== -1) throw new Error('the log chain is broken; batch not closed');
+      assertConsistent('batch not closed');
       const root = merkleRoot(entries.map((e) => e.entry_hash));
       const batchId = store.closeBatch(entries, root, clock().toISOString());
       await Promise.all([anchorSepolia(batchId, root), anchorOts(batchId, root)]);
@@ -70,6 +76,8 @@ export function createLog(config) {
      */
     async anchorPending() {
       const out = [];
+      if (!store.batches().some((b) => (!b.sepolia_tx && config.sepolia) || (!b.ots_proof && config.ots !== false))) return out;
+      assertConsistent('nothing anchored');
       for (const b of store.batches()) {
         const tasks = [];
         if (!b.sepolia_tx && config.sepolia) tasks.push(anchorSepolia(b.batch_id, b.root));
@@ -119,11 +127,25 @@ export function createLog(config) {
 
     /**
      * Proof for a commitment: its log entry, its Merkle path and the batch with both anchors.
-     * The entry is returned without a batch while its batch is still open.
+     * The entry is returned without a batch while its batch is still open. The same commitment may be logged under
+     * more than one entry type; pass `entryType` to choose. Without it, a commitment logged under several types
+     * throws an error with `code = 'ambiguous'` and the list of types.
+     * @param {string} commitment
+     * @param {string} [entryType]
      */
-    proof(commitment) {
+    proof(commitment, entryType) {
       if (typeof commitment !== 'string' || !/^[0-9a-f]{64}$/.test(commitment)) return null;
-      const entry = store.entryByCommitment(commitment);
+      let entry;
+      if (entryType !== undefined) {
+        if (!ENTRY_TYPES.includes(entryType)) return null;
+        entry = store.entryByTypeAndCommitment(entryType, commitment);
+      } else {
+        const all = store.entriesByCommitment(commitment);
+        if (all.length > 1) {
+          throw Object.assign(new Error('commitment is logged under several entry types; choose one'), { code: 'ambiguous', types: all.map((e) => e.entry_type) });
+        }
+        [entry] = all;
+      }
       if (!entry) return null;
       const { batch_id: batchId, ...fields } = entry;
       if (batchId === null) return { entry: fields, batch: null, merkle_path: null };

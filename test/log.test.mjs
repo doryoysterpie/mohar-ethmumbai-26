@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { generatePrivateKey } from 'viem/accounts';
 import { sha256Hex } from '../src/shared/encoding.mjs';
 import { firstBreak, GENESIS, entryHash } from '../src/log/chain.mjs';
+import { logProblems } from '../src/log/integrity.mjs';
 import { merkleRoot, merklePath, rootFromPath, EMPTY_LEAF, leafHash } from '../src/log/merkle.mjs';
 import { openLogStore } from '../src/log/store.mjs';
 import { createLog } from '../src/log/service.mjs';
@@ -56,7 +57,7 @@ test('a removed entry, or an entry rewritten with its own hash, breaks the chain
 test('a batch is not closed over a broken chain', async () => {
   const { store, log } = filled(3);
   store.db.prepare('UPDATE entries SET commitment = ? WHERE seq = 1').run(sha256Hex('other'));
-  await assert.rejects(log.closeBatch(), /chain is broken/);
+  await assert.rejects(log.closeBatch(), /inconsistent \(hash chain broken at seq 1\)/);
   assert.equal(store.batches().length, 0);
 });
 
@@ -204,5 +205,81 @@ test('operator routes need the token and are off without one', async () => {
   } finally {
     open.close();
     closed.close();
+  }
+});
+
+test('deleting the final unbatched entry is detected, and its sequence number is never reused', async () => {
+  const { store, log } = filled(3);
+  store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+  assert.deepEqual(logProblems(store), ['tail is seq 1 but the head checkpoint is seq 2']);
+  assert.throws(() => log.commit({ entry_type: 'consent', commitment: sha256Hex('replacement') }), /does not match its head checkpoint/);
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM entries WHERE seq = 2').get().n, 0);
+  await assert.rejects(log.closeBatch(), /inconsistent/);
+});
+
+test('deleting the final batched entries is detected, even with the head rewritten to match', async () => {
+  const { store, log } = filled(3);
+  await log.closeBatch();
+  store.db.pragma('foreign_keys = OFF');
+  store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+  store.db.prepare('UPDATE head SET seq = 1, entry_hash = (SELECT entry_hash FROM entries WHERE seq = 1)').run();
+  assert.deepEqual(logProblems(store), ['batch 1 does not hold seq 0–2 exactly']);
+  assert.throws(() => log.commit({ entry_type: 'consent', commitment: sha256Hex('after') }), /closed batch ends at seq 2, after the log tail/);
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM entries WHERE seq = 2').get().n, 0);
+});
+
+test('a corrupted entry in a closed batch stops the next batch from closing', async () => {
+  const { store, log } = filled(2);
+  await log.closeBatch();
+  store.db.prepare('UPDATE entries SET commitment = ? WHERE seq = 0').run(sha256Hex('rewritten'));
+  log.commit({ entry_type: 'receipt', commitment: sha256Hex('later') });
+  await assert.rejects(log.closeBatch(), /hash chain broken at seq 0/);
+  assert.equal(store.batches().length, 1);
+});
+
+test('a modified stored root is not anchored', async () => {
+  const rpc = await fakeRpc();
+  try {
+    const store = openLogStore(':memory:');
+    const before = createLog({ store, ots: false });
+    before.commit({ entry_type: 'receipt', commitment: sha256Hex('r') });
+    await before.closeBatch();
+    store.db.prepare('UPDATE batches SET root = ? WHERE batch_id = 1').run(sha256Hex('other root'));
+    const after = createLog({ store, ots: false, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 } });
+    await assert.rejects(after.anchorPending(), /batch 1 root does not recompute/);
+    assert.equal(rpc.state.txs.size, 0);
+  } finally {
+    rpc.close();
+  }
+});
+
+test('the same commitment under two entry types gives two proofs, each to its own batch root', async () => {
+  const { log } = filled(0);
+  const c = sha256Hex('shared');
+  log.commit({ entry_type: 'consent', commitment: c });
+  const b1 = await log.closeBatch();
+  log.commit({ entry_type: 'receipt', commitment: c });
+  const b2 = await log.closeBatch();
+  const consent = log.proof(c, 'consent');
+  const receipt = log.proof(c, 'receipt');
+  assert.equal(consent.entry.entry_type, 'consent');
+  assert.equal(receipt.entry.entry_type, 'receipt');
+  assert.equal(rootFromPath(consent.entry.entry_hash, consent.merkle_path), b1.root);
+  assert.equal(rootFromPath(receipt.entry.entry_hash, receipt.merkle_path), b2.root);
+  assert.throws(() => log.proof(c), (e) => e.code === 'ambiguous' && e.types.join() === 'consent,receipt');
+  assert.equal(log.proof(c, 'recheck'), null);
+
+  const server = createLogServer(log);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}/proof/${c}`;
+  try {
+    const amb = await fetch(base);
+    assert.equal(amb.status, 409);
+    assert.deepEqual((await amb.json()).entry_types, ['consent', 'receipt']);
+    const r = await fetch(`${base}?entry_type=receipt`);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).batch.batch_id, b2.batch_id);
+  } finally {
+    server.close();
   }
 });

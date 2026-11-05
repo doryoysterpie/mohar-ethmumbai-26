@@ -27,7 +27,7 @@ A status check returns `not_revoked`, `revoked` or `unknown`. `unknown` covers a
 
 ## Log
 
-The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is a SHA-256 hex string. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry.
+The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is a SHA-256 hex string. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry. The store keeps a head checkpoint (the sequence number and hash of the last entry appended) and refuses to append when the stored tail does not match it or a closed batch ends after it. Before closing or anchoring a batch, the service re-checks the whole chain, the checkpoint and every closed batch root, and refuses if any of them is wrong.
 
 A batch closes over every waiting entry. Its root is a Merkle tree over the entries: leaves are `SHA-256(0x00 || entry_hash)`, inner nodes `SHA-256(0x01 || left || right)`, and the tree is padded to a power of two with `SHA-256(0x02)`, which no entry can produce. The root is anchored twice:
 
@@ -41,7 +41,8 @@ node --env-file=.env bin/log.mjs serve     # PORT (default 8081), batch every MO
 node --env-file=.env bin/log.mjs batch     # close and anchor a batch now
 node --env-file=.env bin/log.mjs anchor    # anchor batches still missing an anchor
 node --env-file=.env bin/log.mjs upgrade   # ask the calendars for Bitcoin attestations
-node bin/log.mjs check                     # re-check the hash chain
+node bin/log.mjs check                     # re-check chain, head checkpoint and batch roots
+node --env-file=.env bin/log.mjs check --anchors   # also compare each stored root with its Sepolia calldata
 ```
 
 `.env` (not tracked) holds `MOHAR_SEPOLIA_KEY` (operator key, `0x…`), `MOHAR_SEPOLIA_RPCS` (comma-separated), and `MOHAR_ADMIN_TOKEN`. Set `MOHAR_OTS=off` to skip OpenTimestamps.
@@ -49,7 +50,7 @@ node bin/log.mjs check                     # re-check the hash chain
 | Method | Path | Result |
 |---|---|---|
 | POST | `/commit` | 201 new entry, 200 existing entry, 400 for anything that is not exactly `{ entry_type, commitment }` |
-| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open |
+| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open; `?entry_type=` chooses when the same commitment is logged under several types (409 otherwise) |
 | GET | `/batches/{id}` | batch summary |
 | POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
 

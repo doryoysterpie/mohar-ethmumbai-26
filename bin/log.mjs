@@ -4,7 +4,8 @@
 //   batch      closes and anchors a batch now, prints it
 //   anchor     anchors every closed batch still missing a Sepolia transaction or an OpenTimestamps proof
 //   upgrade    upgrades pending OpenTimestamps proofs, prints their states
-//   check      re-checks the whole hash chain, prints the first broken seq or "intact"
+//   check      re-checks the chain, the head checkpoint and every closed batch root; --anchors also compares each
+//              anchored root with its Sepolia calldata; prints the problems or "intact"
 // Environment: MOHAR_LOG_DB (default log.sqlite), MOHAR_ADMIN_TOKEN (operator routes), MOHAR_SEPOLIA_KEY (0x… operator key),
 // MOHAR_SEPOLIA_RPCS (comma-separated, first is preferred), MOHAR_OTS=off to skip OpenTimestamps.
 // Keep secrets in a local .env file and run with: node --env-file=.env bin/log.mjs <command>
@@ -13,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { openLogStore } from '../src/log/store.mjs';
 import { createLog } from '../src/log/service.mjs';
 import { createLogServer } from '../src/log/server.mjs';
-import { firstBreak } from '../src/log/chain.mjs';
+import { logProblems } from '../src/log/integrity.mjs';
+import { readAnchor } from '../src/anchor/sepolia.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const store = openLogStore(process.env.MOHAR_LOG_DB ?? path.join(ROOT, 'log.sqlite'));
@@ -59,9 +61,21 @@ if (cmd === 'serve') {
 } else if (cmd === 'upgrade') {
   print(await log.upgradePending());
 } else if (cmd === 'check') {
-  const at = firstBreak(store.entries());
-  process.stdout.write(`${at === -1 ? 'intact' : `broken at seq ${at}`}\n`);
-  process.exit(at === -1 ? 0 : 1);
+  const problems = logProblems(store);
+  if (process.argv.includes('--anchors')) {
+    const rpcUrls = (process.env.MOHAR_SEPOLIA_RPCS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    for (const b of store.batches()) {
+      if (!b.sepolia_tx) continue;
+      try {
+        const tx = await readAnchor({ txHash: b.sepolia_tx, rpcUrls });
+        if (tx.calldata !== b.root) problems.push(`batch ${b.batch_id} stored root differs from its Sepolia anchor`);
+      } catch (e) {
+        problems.push(`batch ${b.batch_id} Sepolia anchor could not be read: ${e.message}`);
+      }
+    }
+  }
+  process.stdout.write(problems.length ? `${problems.join('\n')}\n` : 'intact\n');
+  process.exit(problems.length ? 1 : 0);
 } else {
   console.error('usage: log serve | batch | anchor | upgrade | check');
   process.exit(2);
