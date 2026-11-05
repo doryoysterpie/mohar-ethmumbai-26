@@ -1,16 +1,15 @@
-import { sha256Hex } from '../shared/encoding.mjs';
+import { saltedCommitment } from '../shared/commitment.mjs';
 
 export const ENTRY_TYPES = ['consent', 'presentation', 'receipt', 'recheck'];
 
 /**
- * Posts the SHA-256 commitment of a record to the log service. The record itself never leaves the caller.
- * @param {{ logUrl: string, entryType: string, record: string, fetch?: typeof fetch }} p
+ * Posts the salted commitment of a record to the log service. The record and its salt never leave the caller.
+ * @param {{ logUrl: string, entryType: string, record: string, salt: string, fetch?: typeof fetch }} p
  * @returns {Promise<{ commitment: string, response: unknown }>}
  */
-export async function commitRecord({ logUrl, entryType, record, fetch: f = fetch }) {
+export async function commitRecord({ logUrl, entryType, record, salt, fetch: f = fetch }) {
   if (!ENTRY_TYPES.includes(entryType)) throw new Error(`unknown entry type ${entryType}`);
-  if (typeof record !== 'string' || record.length === 0) throw new Error('record must be a non-empty string');
-  const commitment = sha256Hex(record);
+  const commitment = saltedCommitment(record, salt);
   const res = await f(new URL('commit', logUrl.endsWith('/') ? logUrl : `${logUrl}/`), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

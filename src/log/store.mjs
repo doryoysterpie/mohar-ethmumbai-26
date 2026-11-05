@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { nextEntry } from './chain.mjs';
+import { nextEntry, firstBreak } from './chain.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS entries (
@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS entries (
   batch_id INTEGER REFERENCES batches (batch_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS entries_commitment ON entries (entry_type, commitment);
+CREATE TABLE IF NOT EXISTS head (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  seq INTEGER NOT NULL,
+  entry_hash TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS batches (
   batch_id INTEGER PRIMARY KEY AUTOINCREMENT,
   first_seq INTEGER NOT NULL,
@@ -40,21 +45,48 @@ export function openLogStore(file) {
   const byCommitment = db.prepare('SELECT * FROM entries WHERE entry_type = ? AND commitment = ?');
   const insert = db.prepare(`INSERT INTO entries (seq, prev_hash, entry_type, commitment, ts, entry_hash)
     VALUES (@seq, @prev_hash, @entry_type, @commitment, @ts, @entry_hash)`);
+  const getHead = db.prepare('SELECT seq, entry_hash FROM head WHERE id = 1');
+  const lastClosed = db.prepare('SELECT max(last_seq) AS s FROM batches');
+  const setHead = db.prepare('INSERT INTO head (id, seq, entry_hash) VALUES (1, @seq, @entry_hash) ON CONFLICT (id) DO UPDATE SET seq = @seq, entry_hash = @entry_hash');
+
+  // A store written before the head checkpoint existed adopts its current tail once, if the chain is intact.
+  if (!getHead.get() && last.get()) {
+    const all = db.prepare('SELECT * FROM entries ORDER BY seq').all();
+    if (firstBreak(all) !== -1) throw new Error('log chain is broken; cannot adopt a head checkpoint');
+    setHead.run(last.get());
+  }
 
   return {
     db,
     close: () => db.close(),
 
-    /** Appends an entry, or returns the existing one for the same type and commitment. */
+    /** The head checkpoint: seq and entry_hash of the last entry ever appended, or null for an empty log. */
+    head: () => getHead.get() ?? null,
+
+    /**
+     * Appends an entry, or returns the existing one for the same type and commitment.
+     * Refuses when the last stored entry is not the head checkpoint (the tail was removed or replaced).
+     */
     append: db.transaction((entryType, commitment, ts) => {
       const existing = byCommitment.get(entryType, commitment);
       if (existing) return { entry: existing, created: false };
-      const e = nextEntry(last.get() ?? null, entryType, commitment, ts);
+      const tail = last.get() ?? null;
+      const head = getHead.get() ?? null;
+      if ((head === null) !== (tail === null) || (head && (head.seq !== tail.seq || head.entry_hash !== tail.entry_hash))) {
+        throw new Error('the log tail does not match its head checkpoint; nothing appended');
+      }
+      const closedTo = lastClosed.get().s;
+      if (closedTo !== null && (tail === null || closedTo > tail.seq)) {
+        throw new Error(`a closed batch ends at seq ${closedTo}, after the log tail; nothing appended`);
+      }
+      const e = nextEntry(tail, entryType, commitment, ts);
       insert.run(e);
+      setHead.run(e);
       return { entry: { ...e, batch_id: null }, created: true };
     }),
 
-    entryByCommitment: (commitment) => db.prepare('SELECT * FROM entries WHERE commitment = ? ORDER BY seq LIMIT 1').get(commitment),
+    entriesByCommitment: (commitment) => db.prepare('SELECT * FROM entries WHERE commitment = ? ORDER BY seq').all(commitment),
+    entryByTypeAndCommitment: (entryType, commitment) => byCommitment.get(entryType, commitment),
     entries: () => db.prepare('SELECT * FROM entries ORDER BY seq').all(),
     unbatched: () => db.prepare('SELECT * FROM entries WHERE batch_id IS NULL ORDER BY seq').all(),
     batchEntries: (batchId) => db.prepare('SELECT * FROM entries WHERE batch_id = ? ORDER BY seq').all(batchId),

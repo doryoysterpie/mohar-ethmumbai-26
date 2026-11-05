@@ -32,7 +32,8 @@ function tokenMatches(header, expected) {
 /**
  * HTTP service for the log:
  *   POST /commit                { entry_type, commitment } -> 201 new entry, 200 existing entry, 400 anything else
- *   GET  /proof/{commitment}    entry, Merkle path and batch with both anchors; 404 when unknown
+ *   GET  /proof/{commitment}    entry, Merkle path and batch with both anchors; 404 when unknown;
+ *                               ?entry_type= chooses among entry types; 409 when the commitment has several and none is chosen
  *   GET  /batches/{id}          batch summary
  *   POST /batch                 closes and anchors a batch now; operator token
  *   POST /upgrade               upgrades pending OpenTimestamps proofs; operator token
@@ -64,7 +65,14 @@ export function createLogServer(log, options = {}) {
         return send(res, out.created ? 201 : 200, out.entry);
       }
       if (req.method === 'GET' && parts[0] === 'proof' && parts.length === 2) {
-        const p = log.proof(parts[1]);
+        const entryType = url.searchParams.get('entry_type') ?? undefined;
+        let p;
+        try {
+          p = log.proof(parts[1], entryType);
+        } catch (e) {
+          if (e.code === 'ambiguous') return send(res, 409, { error: e.message, entry_types: e.types });
+          throw e;
+        }
         return p ? send(res, 200, p) : send(res, 404, { error: 'no entry for this commitment' });
       }
       if (req.method === 'GET' && parts[0] === 'batches' && parts.length === 2) {

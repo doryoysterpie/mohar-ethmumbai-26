@@ -4,6 +4,7 @@ import http from 'node:http';
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { generateEd25519, didKeyFromJwk, signerFor } from '../../src/shared/keys.mjs';
 import { sha256Hex } from '../../src/shared/encoding.mjs';
+import { newSalt } from '../../src/shared/commitment.mjs';
 import { didDocument } from '../../src/issuer/did-web.mjs';
 import { issueCredential, hasher } from '../../src/issuer/credential.mjs';
 import { buildStatusList } from '../../src/issuer/status-list.mjs';
@@ -45,9 +46,11 @@ export async function world({ logUrl } = {}) {
     return buildStatusList({ uri: STATUS_LIST_URI, statuses: w.statuses, issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
   };
   w.store = openStore(':memory:');
-  w.school = createSchool({
+  w.rawSchool = createSchool({
     store: w.store, schoolPrivateJwk: schoolKey.privateJwk, didFetch, fetchText: w.fetchText, logUrl, clock: () => w.now,
   });
+  // Tests that are not about the presentation salt get a fresh one; w.rawSchool is the school as is.
+  w.school = { ...w.rawSchool, present: (body) => w.rawSchool.present({ ...body, presentation_salt: body?.presentation_salt ?? newSalt() }) };
   w.consent = await signConsent({ holderDid: w.holderDid, holderPrivateJwk: holder.privateJwk, schoolDid: w.school.did, now: w.now });
   w.credential = (statusIndex = 0, issuerPrivateJwk = issuer.privateJwk) => issueCredential({
     certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex, issuerPrivateJwk, kid,

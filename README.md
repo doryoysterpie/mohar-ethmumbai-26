@@ -29,15 +29,15 @@ A status check returns `not_revoked`, `revoked` or `unknown`. `unknown` covers a
 
 The teacher holds a did:key, signs a consent record naming the school, the purpose, the claims to disclose and an end date (the end of the academic year, 31 March by default; set `MOHAR_ACADEMIC_YEAR_END=MM-DD` to change it), and builds a presentation that discloses only those claims. Before presenting, the teacher verifies the credential against the issuer's did:web document and refuses it unless its always-visible part is exactly `iss`, `sub` (this teacher), `vct`, `iat`, `status.status_list` with only `idx` and the issuer's list `uri`, `cnf.jwk` with only `kty`, `crv` and this teacher's `x`, `_sd` and `_sd_alg`, and unless every disclosed value has its allowed type (no nested structure). Consent times must be ISO 8601 UTC with milliseconds. The presentation carries a key-binding JWT with the school as `aud`, the school's `nonce`, `iat`, and the SHA-256 of the consent record. Roll number, date of birth, category, family names and marks are never disclosed.
 
-The presentation and the consent go to the school directly. The log service receives only their SHA-256 commitments.
+The presentation and the consent go to the school directly. The log service receives only their salted commitments (see Log). The teacher keeps both salts and sends the presentation salt to the school with the presentation.
 
 ```
 node bin/holder.mjs keygen teacher-a                         # prints the teacher's did:key
 node bin/holder.mjs consent teacher-a <school did:key> > consent.jws
-MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent.jws <school did:key> <nonce> > presentation.txt
+MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent.jws <school did:key> <nonce> > presentation.json
 ```
 
-`present` posts both commitments to the log service when `MOHAR_LOG_URL` is set, and prints them otherwise. `MOHAR_SITE_DIR` reads the issuer's `did.json` from a local copy of the site instead of fetching it.
+`present` prints `{ presentation, presentation_salt }`, keeps the consent salt in `consent.jws.salt`, and posts both salted commitments to the log service when `MOHAR_LOG_URL` is set (it prints them otherwise). `MOHAR_SITE_DIR` reads the issuer's `did.json` from a local copy of the site instead of fetching it.
 
 The consent record follows the shape of a consent record under India's Digital Personal Data Protection Rules, 2025. Mohar is not a registered Consent Manager and does not claim to be. Withdrawal is recorded as available; a withdrawal endpoint is not in this version.
 
@@ -56,7 +56,7 @@ node bin/school.mjs recheck                                  # term check agains
 | Method | Path | Result |
 |---|---|---|
 | GET | `/nonce` | `{ nonce, expires_at }`, valid for ten minutes, usable once |
-| POST | `/present` | `{ presentation, consent }` → 200 with the receipt, or 422 with the refusal |
+| POST | `/present` | `{ presentation, consent, presentation_salt }` → 200 with the receipt, 422 with the refusal, 400 without a valid salt |
 | GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert; staff token |
 | POST | `/recheck` | term check; staff token |
 | GET | `/export/{id}` | export bundle for a receipt or re-check receipt (needs `MOHAR_LOG_URL`); 409 while its batch is open |
@@ -65,7 +65,7 @@ Staff routes take `authorization: Bearer <MOHAR_ADMIN_TOKEN>` and are off when t
 
 ## Log
 
-The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is a SHA-256 hex string. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry.
+The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is `SHA-256("mohar/commit/v1" || salt || record)`: the ASCII domain string, a 32-byte random salt and the UTF-8 bytes of the record. Whoever creates a record makes its salt and keeps it; the salt never goes to the log, so no log field can be recomputed from a record, or from anything in it, without that salt. The school keeps the receipt and re-check salts and the presentation salt it receives. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry. The store keeps a head checkpoint (the sequence number and hash of the last entry appended) and refuses to append when the stored tail does not match it or a closed batch ends after it. Before closing or anchoring a batch, the service re-checks the whole chain, the checkpoint and every closed batch root, and refuses if any of them is wrong.
 
 A batch closes over every waiting entry. Its root is a Merkle tree over the entries: leaves are `SHA-256(0x00 || entry_hash)`, inner nodes `SHA-256(0x01 || left || right)`, and the tree is padded to a power of two with `SHA-256(0x02)`, which no entry can produce. The root is anchored twice:
 
@@ -79,7 +79,8 @@ node --env-file=.env bin/log.mjs serve     # PORT (default 8081), batch every MO
 node --env-file=.env bin/log.mjs batch     # close and anchor a batch now
 node --env-file=.env bin/log.mjs anchor    # anchor batches still missing an anchor
 node --env-file=.env bin/log.mjs upgrade   # ask the calendars for Bitcoin attestations
-node bin/log.mjs check                     # re-check the hash chain
+node bin/log.mjs check                     # re-check chain, head checkpoint and batch roots
+node --env-file=.env bin/log.mjs check --anchors   # also compare each stored root with its Sepolia calldata
 ```
 
 `.env` (not tracked) holds `MOHAR_SEPOLIA_KEY` (operator key, `0x…`), `MOHAR_SEPOLIA_RPCS` (comma-separated), and `MOHAR_ADMIN_TOKEN`. Set `MOHAR_OTS=off` to skip OpenTimestamps.
@@ -87,7 +88,7 @@ node bin/log.mjs check                     # re-check the hash chain
 | Method | Path | Result |
 |---|---|---|
 | POST | `/commit` | 201 new entry, 200 existing entry, 400 for anything that is not exactly `{ entry_type, commitment }` |
-| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open |
+| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open; `?entry_type=` chooses when the same commitment is logged under several types (409 otherwise) |
 | GET | `/batches/{id}` | batch summary |
 | POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
 

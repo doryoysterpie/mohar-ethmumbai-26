@@ -13,8 +13,10 @@ CREATE TABLE IF NOT EXISTS receipts (
   receipt_id TEXT PRIMARY KEY,
   holder_did TEXT NOT NULL,
   presentation TEXT NOT NULL,
+  presentation_salt TEXT NOT NULL,
   consent TEXT NOT NULL,
   receipt TEXT NOT NULL,
+  receipt_salt TEXT NOT NULL,
   status_ref TEXT NOT NULL,
   issuer TEXT NOT NULL,
   status_result TEXT NOT NULL,
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS rechecks (
   recheck_id TEXT PRIMARY KEY,
   receipt_id TEXT NOT NULL REFERENCES receipts (receipt_id),
   recheck TEXT NOT NULL,
+  recheck_salt TEXT NOT NULL,
   status_result TEXT NOT NULL,
   checked_at TEXT NOT NULL,
   next_recheck_due TEXT NOT NULL,
@@ -78,14 +81,15 @@ export function openStore(file) {
     },
 
     saveReceipt(r) {
-      db.prepare(`INSERT INTO receipts (receipt_id, holder_did, presentation, consent, receipt, status_ref, issuer, status_result,
-        verified_at, recheck_due, valid_until) VALUES (@receipt_id, @holder_did, @presentation, @consent, @receipt, @status_ref,
-        @issuer, @status_result, @verified_at, @recheck_due, @valid_until)`).run(r);
+      db.prepare(`INSERT INTO receipts (receipt_id, holder_did, presentation, presentation_salt, consent, receipt, receipt_salt, status_ref,
+        issuer, status_result, verified_at, recheck_due, valid_until) VALUES (@receipt_id, @holder_did, @presentation,
+        @presentation_salt, @consent, @receipt, @receipt_salt, @status_ref, @issuer, @status_result, @verified_at, @recheck_due,
+        @valid_until)`).run(r);
     },
 
     saveRecheck(r) {
-      db.prepare(`INSERT INTO rechecks (recheck_id, receipt_id, recheck, status_result, checked_at, next_recheck_due, alert)
-        VALUES (@recheck_id, @receipt_id, @recheck, @status_result, @checked_at, @next_recheck_due, @alert)`).run(r);
+      db.prepare(`INSERT INTO rechecks (recheck_id, receipt_id, recheck, recheck_salt, status_result, checked_at, next_recheck_due, alert)
+        VALUES (@recheck_id, @receipt_id, @recheck, @recheck_salt, @status_result, @checked_at, @next_recheck_due, @alert)`).run(r);
     },
 
     saveRefusal(presentationHash, reason, refusedAt) {

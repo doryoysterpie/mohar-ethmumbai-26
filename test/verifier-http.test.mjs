@@ -90,3 +90,25 @@ test('a malformed key binding over HTTP is 422 key_binding_invalid with one stor
     s.close();
   }
 });
+
+test('a presentation without a valid presentation salt is refused before verification', async () => {
+  const w = await world();
+  const server = createServer(w.rawSchool);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const salt of [undefined, 'ab', 'AB'.repeat(32)]) {
+      const presentation = await w.present();
+      const res = await post(`${base}/present`, JSON.stringify({ presentation, consent: w.consent, presentation_salt: salt }));
+      assert.equal(res.status, 400, String(salt));
+      assert.match((await res.json()).error, /presentation_salt must be 32 bytes/);
+    }
+    assert.equal(w.receiptCount(), 0);
+    assert.equal(w.store.refusals().length, 0);
+    const ok = await post(`${base}/present`, JSON.stringify({ presentation: await w.present(), consent: w.consent, presentation_salt: 'cd'.repeat(32) }));
+    assert.equal(ok.status, 200);
+    assert.equal(w.store.db.prepare('SELECT presentation_salt FROM receipts').get().presentation_salt, 'cd'.repeat(32));
+  } finally {
+    server.close();
+  }
+});
