@@ -6,7 +6,8 @@ import { didKeyFromJwk, publicOf, verifierFor } from '../shared/keys.mjs';
 import { signJws } from '../shared/jws.mjs';
 import { hasher, verifyCredential } from '../issuer/credential.mjs';
 import { checkStatus } from '../issuer/status-list.mjs';
-import { ISSUER_DID } from '../issuer/profile.mjs';
+import { ISSUER_DID, VCT, STATUS_LIST_URI } from '../issuer/profile.mjs';
+import { assertCredentialShape, assertDisclosures } from '../issuer/shape.mjs';
 import { resolveIssuerKey } from '../issuer/did-web.mjs';
 import { verifyConsent, didKeyKid } from '../holder/consent.mjs';
 import { commitRecord } from '../log/client.mjs';
@@ -18,6 +19,9 @@ export const RECHECK_TYP = 'recheck+jwt';
 export const REFUSALS = [
   'issuer_signature_invalid', 'key_binding_invalid', 'nonce_stale', 'consent_mismatch', 'status_revoked', 'scope_insufficient',
 ];
+
+/** Clock difference tolerated between the school and the issuer or teacher when checking iat. */
+export const CLOCK_SKEW_SECONDS = 60;
 
 /** Claims the school needs disclosed to sign a receipt. */
 export const REQUIRED_CLAIMS = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment'];
@@ -74,14 +78,19 @@ export function createSchool(config) {
     const sdOnly = presentation.slice(0, presentation.lastIndexOf('~') + 1);
     let credential;
     try {
-      credential = await verifyCredential(sdOnly, { didFetch: config.didFetch });
+      credential = await verifyCredential(sdOnly, { didFetch: config.didFetch, currentDate: seconds(now), skewSeconds: CLOCK_SKEW_SECONDS });
     } catch (e) {
       throw new Refusal('issuer_signature_invalid', e.message);
     }
     if (!trusted.includes(credential.payload.iss)) throw new Refusal('issuer_signature_invalid', 'issuer is not trusted by this school');
 
     // Key binding: signed by the credential's cnf key, for this school, fresh, over this SD-JWT.
-    const decoded = await decodeSdJwt(presentation, hasher);
+    let decoded;
+    try {
+      decoded = await decodeSdJwt(presentation, hasher);
+    } catch (e) {
+      throw new Refusal('key_binding_invalid', `key binding cannot be decoded: ${e.message}`);
+    }
     const kbPayload = decoded.kbJwt?.payload;
     if (!kbPayload) throw new Refusal('key_binding_invalid', 'presentation has no key binding');
     const cnf = credential.payload.cnf?.jwk;
@@ -101,11 +110,24 @@ export function createSchool(config) {
         keyBindingMaxAgeSeconds: kbMaxAge,
         allowedKeyBindingAlgorithms: ['EdDSA'],
         currentDate: seconds(now),
+        skewSeconds: CLOCK_SKEW_SECONDS,
       });
     } catch (e) {
       throw new Refusal('key_binding_invalid', e.message);
     }
     if (kbPayload.aud !== did) throw new Refusal('key_binding_invalid', 'key binding is for another audience');
+
+    // Visible credential and disclosed values: exactly the eligibility-credential shape, nothing nested or extra.
+    try {
+      const raw = decoded.jwt.payload;
+      if (typeof raw.sub !== 'string' || raw.sub !== didKeyFromJwk({ kty: 'OKP', crv: 'Ed25519', x: String(cnf.x) })) {
+        throw new Error('credential subject is not the did:key of its holder key');
+      }
+      assertCredentialShape(raw, { issuer: credential.payload.iss, vct: VCT, statusUri: STATUS_LIST_URI, holderDid: raw.sub, holderX: cnf.x });
+      assertDisclosures(decoded.disclosures, decoded.disclosures.map((d) => d.key));
+    } catch (e) {
+      throw new Refusal('consent_mismatch', `presentation carries data outside the credential profile: ${e.message}`);
+    }
 
     // Consent: valid now, given by the credential's holder to this school, and the one the key binding names.
     let c;
@@ -118,12 +140,14 @@ export function createSchool(config) {
     if (c.data_fiduciary !== did) throw new Refusal('consent_mismatch', 'consent is for another school');
     if (c.data_principal !== credential.payload.sub) throw new Refusal('consent_mismatch', 'consent is not from the credential holder');
 
-    // Disclosures: exactly the consented claims, including what the receipt needs.
-    const disclosed = decoded.disclosures.map((d) => d.key).filter((k) => typeof k === 'string');
+    // Disclosures: the consent must cover what the receipt needs, and the presentation must disclose exactly the consent.
+    const uncovered = REQUIRED_CLAIMS.filter((k) => !c.scope.includes(k));
+    if (uncovered.length) throw new Refusal('scope_insufficient', `consent does not cover: ${uncovered.join(', ')}`);
+    const disclosed = decoded.disclosures.map((d) => d.key);
     const extra = disclosed.filter((k) => !c.scope.includes(k));
     if (extra.length) throw new Refusal('consent_mismatch', `disclosed outside consent: ${extra.join(', ')}`);
-    const missing = REQUIRED_CLAIMS.filter((k) => !disclosed.includes(k));
-    if (missing.length) throw new Refusal('scope_insufficient', `not disclosed: ${missing.join(', ')}`);
+    const omitted = c.scope.filter((k) => !disclosed.includes(k));
+    if (omitted.length) throw new Refusal('consent_mismatch', `consented but not disclosed: ${omitted.join(', ')}`);
 
     // Nonce: issued by this school, unused and unexpired. Consumed here, once.
     const n = store.consumeNonce(kbPayload.nonce, seconds(now));

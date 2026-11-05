@@ -2,13 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { generateEd25519, didKeyFromJwk, jwkFromDidKey, signerFor } from '../src/shared/keys.mjs';
-import { hasher } from '../src/issuer/credential.mjs';
-import { CONSENT_SCOPE } from '../src/holder/consent.mjs';
-import { decodeJws, verifyJws } from '../src/shared/jws.mjs';
+import { randomBytes } from 'node:crypto';
+import { hasher, issueCredential } from '../src/issuer/credential.mjs';
+import { ISSUER_DID, VCT, STATUS_LIST_URI } from '../src/issuer/profile.mjs';
+import { CONSENT_SCOPE, didKeyKid } from '../src/holder/consent.mjs';
+import { decodeJws, verifyJws, signJws } from '../src/shared/jws.mjs';
 import { sha256Hex } from '../src/shared/encoding.mjs';
 import { signConsent } from '../src/holder/consent.mjs';
 import { RECEIPT_TYP, RECHECK_TYP } from '../src/verifier/school.mjs';
-import { world, logServer } from './helpers/world.mjs';
+import { world, logServer, cert } from './helpers/world.mjs';
 
 const receiptOf = (r) => decodeJws(r.receipt).payload;
 
@@ -193,5 +195,64 @@ test('every refusal is one of the typed reasons and leaves no receipt', async ()
     assert.equal(r.ok, false);
     assert.ok(['issuer_signature_invalid', 'key_binding_invalid', 'nonce_stale', 'consent_mismatch', 'status_revoked', 'scope_insufficient'].includes(r.refusal), r.refusal);
   }
+  assert.equal(w.receiptCount(), 0);
+});
+
+test('a malformed key binding is a typed refusal, stored, with no receipt', async () => {
+  const w = await world();
+  const parts = (await w.present()).split('~');
+  const presentation = [...parts.slice(0, -1), 'not-a-compact-jwt'].join('~');
+  const r = await w.school.present({ presentation, consent: w.consent });
+  assert.deepEqual([r.ok, r.refusal], [false, 'key_binding_invalid']);
+  assert.equal(w.receiptCount(), 0);
+  const rows = w.store.refusals();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].presentation_hash, sha256Hex(presentation));
+  assert.equal(rows[0].reason, 'key_binding_invalid');
+});
+
+test('a presentation that omits a consented claim is refused', async () => {
+  const w = await world();
+  const presentation = await w.rawPresent({ claims: CONSENT_SCOPE.filter((c) => c !== 'name') });
+  const r = await w.school.present({ presentation, consent: w.consent });
+  assert.equal(r.refusal, 'consent_mismatch');
+  assert.match(r.detail, /consented but not disclosed: name/);
+  assert.equal(w.receiptCount(), 0);
+});
+
+test('a consent with a non-canonical end date is refused, so no re-check can run past it', async () => {
+  const w = await world();
+  const { payload } = decodeJws(w.consent);
+  const odd = await signJws({ ...payload, valid_until: 'April 1, 2027 00:00:00 UTC' }, { typ: 'consent+jwt', kid: didKeyKid(w.holderDid) }, w.holder.privateJwk);
+  const r = await w.school.present({ presentation: await w.rawPresent({ consent: odd }), consent: odd });
+  assert.equal(r.refusal, 'consent_mismatch');
+  assert.match(r.detail, /valid_until must be an ISO 8601/);
+  w.now = new Date('2028-01-01T00:00:00.000Z');
+  assert.deepEqual(await w.school.recheck(), []);
+});
+
+test('an issuer clock up to 60 s ahead of the school is tolerated; further ahead is refused', async () => {
+  const w = await world();
+  const at = (ahead) => issueCredential({
+    certificate: cert, holderPublicJwk: w.holder.publicJwk, statusIndex: 0, issuerPrivateJwk: w.issuer.privateJwk, kid: w.kid,
+    iat: Math.floor(w.now.getTime() / 1000) + ahead,
+  });
+  assert.equal((await w.school.present({ presentation: await w.rawPresent({ credential: await at(59) }), consent: w.consent })).ok, true);
+  const late = await w.school.present({ presentation: await w.rawPresent({ credential: await at(120) }), consent: w.consent });
+  assert.equal(late.refusal, 'issuer_signature_invalid');
+});
+
+test('a validly signed credential with data nested in a visible container is refused by the school', async () => {
+  const w = await world();
+  const sdjwt = new SDJwtVcInstance({ signer: signerFor(w.issuer.privateJwk), signAlg: 'EdDSA', hasher, hashAlg: 'sha-256', saltGenerator: (n) => randomBytes(n).toString('base64url') });
+  const claims = { qualified: true, paper: 'I', stage: 'primary', exam_session: 'JULY 2024', issuing_body: 'CBSE (simulated)', certificate_commitment: 'a'.repeat(64), name: 'A [SIMULATED]' };
+  const credential = await sdjwt.issue({
+    iss: ISSUER_DID, sub: w.holderDid, vct: VCT, iat: Math.floor(w.now.getTime() / 1000) - 10,
+    status: { status_list: { idx: 0, uri: STATUS_LIST_URI, roll_no: 'SIM-2024-100001' } },
+    cnf: { jwk: { kty: 'OKP', crv: 'Ed25519', x: w.holder.publicJwk.x } }, ...claims,
+  }, { _sd: Object.keys(claims) }, { header: { kid: w.kid } });
+  const r = await w.school.present({ presentation: await w.rawPresent({ credential }), consent: w.consent });
+  assert.equal(r.refusal, 'consent_mismatch');
+  assert.match(r.detail, /outside the credential profile/);
   assert.equal(w.receiptCount(), 0);
 });

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from '../src/verifier/server.mjs';
 import { world } from './helpers/world.mjs';
 
@@ -67,6 +68,24 @@ test('bad requests are rejected before verification', async () => {
     assert.equal((await fetch(`${s.base}/export/anything`)).status, 501);
     assert.equal((await fetch(`${s.base}/nowhere`)).status, 404);
     assert.equal(w.store.refusals().length, 0);
+  } finally {
+    s.close();
+  }
+});
+
+test('a malformed key binding over HTTP is 422 key_binding_invalid with one stored refusal', async () => {
+  const w = await world();
+  const s = await serve(w);
+  try {
+    const parts = (await w.present()).split('~');
+    const presentation = [...parts.slice(0, -1), 'not-a-compact-jwt'].join('~');
+    const res = await post(`${s.base}/present`, JSON.stringify({ presentation, consent: w.consent }));
+    assert.equal(res.status, 422);
+    assert.equal((await res.json()).refusal, 'key_binding_invalid');
+    assert.equal(w.receiptCount(), 0);
+    const rows = w.store.refusals();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].presentation_hash, createHash('sha256').update(presentation).digest('hex'));
   } finally {
     s.close();
   }
