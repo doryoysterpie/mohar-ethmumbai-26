@@ -7,7 +7,8 @@ import { generateEd25519, didKeyFromJwk, signerFor } from '../src/shared/keys.mj
 import { fromBase64url } from '../src/shared/encoding.mjs';
 import { didDocument } from '../src/issuer/did-web.mjs';
 import { issueCredential, hasher } from '../src/issuer/credential.mjs';
-import { ISSUER_DID, VCT, NEVER_PRESENTED } from '../src/issuer/profile.mjs';
+import { ISSUER_DID, VCT, STATUS_LIST_URI, NEVER_PRESENTED } from '../src/issuer/profile.mjs';
+import { randomBytes } from 'node:crypto';
 import { signConsent, CONSENT_SCOPE } from '../src/holder/consent.mjs';
 import { buildPresentation, disclosedClaims } from '../src/holder/presentation.mjs';
 import { commitRecord } from '../src/log/client.mjs';
@@ -69,7 +70,7 @@ test('a credential altered to make roll_no always visible is refused, and nothin
     ...disclosures.filter((_, i) => i !== rollIdx), ''].join('~');
   await assert.rejects(
     buildPresentation({ credential: forged, consent, holderPrivateJwk: holder.privateJwk, nonce: NONCE, aud, didFetch }),
-    /always-visible claims outside the allowed set: roll_no/,
+    /credential must have exactly .*; has .*roll_no/,
   );
 });
 
@@ -82,8 +83,55 @@ test('a validly signed credential with an always-visible certificate claim is re
   }, { _sd: ['qualified'] }, { header: { kid } });
   await assert.rejects(
     buildPresentation({ credential: misissued, consent, holderPrivateJwk: holder.privateJwk, nonce: NONCE, aud, didFetch }),
-    /always-visible claims outside the allowed set: roll_no/,
+    /credential must have exactly .*; has .*roll_no/,
   );
+});
+
+/** A credential validly signed by the expected issuer, with the given visible payload changes and disclosed claims. */
+async function misissue(ctx, { visible = (p) => p, claims = { qualified: true } } = {}) {
+  const sdjwt = new SDJwtVcInstance({ signer: signerFor(ctx.issuer.privateJwk), signAlg: 'EdDSA', hasher, hashAlg: 'sha-256', saltGenerator: (n) => randomBytes(n).toString('base64url') });
+  const base = {
+    iss: ISSUER_DID, sub: didKeyFromJwk(ctx.holder.publicJwk), vct: VCT, iat: 1,
+    status: { status_list: { idx: 0, uri: STATUS_LIST_URI } },
+    cnf: { jwk: { kty: 'OKP', crv: 'Ed25519', x: ctx.holder.publicJwk.x } },
+  };
+  return sdjwt.issue({ ...visible(structuredClone(base)), ...claims }, { _sd: Object.keys(claims) }, { header: { kid: ctx.kid } });
+}
+
+test('a validly signed credential with a certificate value nested in any visible container is refused', async () => {
+  const ctx = await present(manifest.credentials[0].certificate, ['qualified']);
+  const roll = 'SIM-2024-100001';
+  const cases = {
+    'status.roll_no': (p) => { p.status.roll_no = roll; return p; },
+    'status.status_list.roll_no': (p) => { p.status.status_list.roll_no = roll; return p; },
+    'status.status_list.uri': (p) => { p.status.status_list.uri = `${STATUS_LIST_URI}?roll_no=${roll}`; return p; },
+    'status.status_list.idx': (p) => { p.status.status_list.idx = roll; return p; },
+    'cnf.roll_no': (p) => { p.cnf.roll_no = roll; return p; },
+    'cnf.jwk.roll_no': (p) => { p.cnf.jwk.roll_no = roll; return p; },
+    'iat': (p) => { p.iat = roll; return p; },
+  };
+  for (const [where, visible] of Object.entries(cases)) {
+    const credential = await misissue(ctx, { visible });
+    await assert.rejects(
+      buildPresentation({ credential, consent: ctx.consent, holderPrivateJwk: ctx.holder.privateJwk, nonce: NONCE, aud: ctx.aud, didFetch: ctx.didFetch }),
+      /Error: credential (status|cnf|iat)/, where,
+    );
+  }
+});
+
+test('a validly signed credential whose consented claim carries structure or a wrong type is refused', async () => {
+  const ctx = await present(manifest.credentials[0].certificate, ['qualified', 'name']);
+  for (const [label, claims] of Object.entries({
+    'name as object': { qualified: true, name: { given: 'A', roll_no: 'SIM-2024-100001' } },
+    'qualified as text': { qualified: 'yes SIM-2024-100001', name: 'A' },
+    'name with a control character': { qualified: true, name: 'A\nSIM-2024-100001' },
+  })) {
+    const credential = await misissue(ctx, { claims });
+    await assert.rejects(
+      buildPresentation({ credential, consent: ctx.consent, holderPrivateJwk: ctx.holder.privateJwk, nonce: NONCE, aud: ctx.aud, didFetch: ctx.didFetch }),
+      /value for (name|qualified) is not allowed/, label,
+    );
+  }
 });
 
 test('a credential that does not verify against the issuer is refused', async () => {

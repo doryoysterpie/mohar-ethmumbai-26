@@ -7,7 +7,7 @@ import { generateEd25519, didKeyFromJwk, verifierFor, signerFor } from '../src/s
 import { signJws, decodeJws } from '../src/shared/jws.mjs';
 import { didDocument } from '../src/issuer/did-web.mjs';
 import { issueCredential, hasher } from '../src/issuer/credential.mjs';
-import { ISSUER_DID, VCT } from '../src/issuer/profile.mjs';
+import { ISSUER_DID, VCT, STATUS_LIST_URI } from '../src/issuer/profile.mjs';
 import { signConsent, consentHash, verifyConsent, didKeyKid, CONSENT_TYP, academicYearEnd } from '../src/holder/consent.mjs';
 import { buildPresentation } from '../src/holder/presentation.mjs';
 
@@ -104,7 +104,8 @@ test('a credential naming this holder but bound to another key is refused', asyn
   const other = await generateEd25519();
   const sdjwt = new SDJwtVcInstance({ signer: signerFor(issuer.privateJwk), signAlg: 'EdDSA', hasher, hashAlg: 'sha-256', saltGenerator: (n) => randomBytes(n).toString('base64url') });
   const credential = await sdjwt.issue({
-    iss: ISSUER_DID, sub: holderDid, vct: VCT, iat: 1, cnf: { jwk: { kty: 'OKP', crv: 'Ed25519', x: other.publicJwk.x } },
+    iss: ISSUER_DID, sub: holderDid, vct: VCT, iat: 1, status: { status_list: { idx: 0, uri: STATUS_LIST_URI } },
+    cnf: { jwk: { kty: 'OKP', crv: 'Ed25519', x: other.publicJwk.x } },
     qualified: true, paper: 'I', stage: 'primary', exam_session: 'JULY 2024', issuing_body: 'CBSE (simulated)', certificate_commitment: 'x', name: 'n',
   }, { _sd: ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'name'] }, { header: { kid } });
   await assert.rejects(present({ credential }), /not bound to this holder/);
