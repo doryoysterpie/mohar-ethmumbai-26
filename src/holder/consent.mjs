@@ -68,6 +68,16 @@ export async function signConsent(p) {
   return signJws(record, { typ: CONSENT_TYP, kid: didKeyKid(p.holderDid) }, p.holderPrivateJwk);
 }
 
+/**
+ * True for the exact form Date.prototype.toISOString produces (YYYY-MM-DDTHH:MM:SS.sssZ) and only for a real instant,
+ * so these strings compare in time order as text.
+ */
+export function isCanonicalTime(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)) return false;
+  const t = Date.parse(v);
+  return Number.isFinite(t) && new Date(t).toISOString() === v;
+}
+
 /** SHA-256 (hex) of the consent record as transmitted. */
 export const consentHash = (consentJws) => sha256Hex(consentJws);
 
@@ -85,6 +95,10 @@ export async function verifyConsent(consentJws, options = {}) {
   if (c.recheck_scope !== 'status_only') throw new Error('consent recheck scope is not status_only');
   if (c.record_shape !== RECORD_SHAPE) throw new Error('consent record shape is not recognised');
   assertScope(c.scope);
+  for (const f of ['granted_at', 'valid_until']) {
+    if (!isCanonicalTime(c[f])) throw new Error(`consent ${f} must be an ISO 8601 UTC time with milliseconds`);
+  }
+  if (Date.parse(c.valid_until) < Date.parse(c.granted_at)) throw new Error('consent ends before it is granted');
   const at = options.at ?? new Date();
   if (!(Date.parse(c.granted_at) <= at.getTime())) throw new Error('consent is not yet granted');
   if (!(at.getTime() <= Date.parse(c.valid_until))) throw new Error('consent has expired');

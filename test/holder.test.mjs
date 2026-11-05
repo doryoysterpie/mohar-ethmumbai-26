@@ -124,6 +124,17 @@ test('a short nonce is refused', async () => {
   await assert.rejects(present({ nonce: '123' }), /nonce/);
 });
 
+test('a consent whose times are not canonical ISO 8601 UTC is refused', async () => {
+  const { consent, holder, holderDid } = await setup();
+  const { payload } = decodeJws(consent);
+  for (const [field, value] of [['valid_until', 'April 1, 2027 00:00:00 UTC'], ['valid_until', '2027-03-31T23:59:59Z'], ['granted_at', 'Nov 6, 2026'], ['valid_until', '2027-02-30T00:00:00.000Z']]) {
+    const odd = await signJws({ ...payload, [field]: value }, { typ: CONSENT_TYP, kid: didKeyKid(holderDid) }, holder.privateJwk);
+    await assert.rejects(verifyConsent(odd, { at: NOW }), new RegExp(`${field} must be an ISO 8601`), `${field}=${value}`);
+  }
+  const backwards = await signJws({ ...payload, valid_until: '2026-01-01T00:00:00.000Z' }, { typ: CONSENT_TYP, kid: didKeyKid(holderDid) }, holder.privateJwk);
+  await assert.rejects(verifyConsent(backwards, { at: NOW }), /ends before it is granted/);
+});
+
 test('consent runs to the end of the academic year', async () => {
   const { consent } = await setup();
   const c = await verifyConsent(consent, { at: NOW });
