@@ -1,0 +1,29 @@
+{
+  "name": "mohar",
+  "version": "0.1.0",
+  "description": "Records that a school verified a teacher's eligibility credential and makes that record provable without the platform.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test:privacy": "node --test test/privacy.*.test.mjs",
+    "test": "node --test test/privacy.*.test.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@sd-jwt/core": "0.24.3",
+    "@sd-jwt/sd-jwt-vc": "0.24.3",
+    "better-sqlite3": "13.0.3",
+    "did-resolver": "6.0.0",
+    "jose": "6.2.15",
+    "key-did-resolver": "4.0.0",
+    "opentimestamps": "0.4.9",
+    "viem": "2.57.16",
+    "web-did-resolver": "3.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
