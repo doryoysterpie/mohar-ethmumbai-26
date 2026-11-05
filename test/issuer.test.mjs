@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generateEd25519, signerFor, didKeyFromJwk } from '../src/shared/keys.mjs';
 import { didDocument, didWebFromBase } from '../src/issuer/did-web.mjs';
+import { getListFromStatusListJWT } from '@owf/token-status-list';
 import { buildStatusList, checkStatus } from '../src/issuer/status-list.mjs';
 import { issueCredential, verifyCredential, certificateCommitment } from '../src/issuer/credential.mjs';
 import { ISSUER_DID, SITE_BASE, STATUS_LIST_URI, DISCLOSABLE } from '../src/issuer/profile.mjs';
@@ -95,6 +96,41 @@ test('a list published for another URI reports unknown', async () => {
   assert.equal((await checkStatus(payload, { fetchText: async () => elsewhere, didFetch })).result, 'unknown');
 });
 
+test('an index past the signed entry count reports unknown, inside or beyond the padded byte', async () => {
+  const { didFetch, kid, issuer } = await setup();
+  const one = await buildStatusList({ uri: STATUS_LIST_URI, statuses: [0], issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
+  const fetchText = async () => one;
+  const at = (idx) => checkStatus({ iss: ISSUER_DID, status: { status_list: { idx, uri: STATUS_LIST_URI } } }, { fetchText, didFetch });
+  assert.equal((await at(0)).result, 'not_revoked');
+  for (const idx of [1, 7, 8, 1000]) {
+    const r = await at(idx);
+    assert.equal(r.result, 'unknown', `index ${idx}`);
+  }
+  assert.match((await at(1)).reason, /not allocated/);
+});
+
+test('the bits that pad a list to a whole byte are set', async () => {
+  const { kid, issuer } = await setup();
+  const token = await buildStatusList({ uri: STATUS_LIST_URI, statuses: [0, 0, 0], issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
+  const list = getListFromStatusListJWT(token);
+  assert.deepEqual([0, 1, 2].map((i) => list.getStatus(i)), [0, 0, 0]);
+  assert.deepEqual([3, 4, 5, 6, 7].map((i) => list.getStatus(i)), [1, 1, 1, 1, 1]);
+  assert.equal(JSON.parse(Buffer.from(token.split('.')[1], 'base64url')).entries, 3);
+});
+
+test('a list without a signed entry count reports unknown', async () => {
+  const { didFetch, kid, issuer } = await setup();
+  const token = await buildStatusList({ uri: STATUS_LIST_URI, statuses: [0, 0], issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
+  const [h, p] = token.split('.');
+  const payload = JSON.parse(Buffer.from(p, 'base64url'));
+  delete payload.entries;
+  const input = `${h}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
+  const resigned = `${input}.${await signerFor(issuer.privateJwk)(input)}`;
+  const r = await checkStatus({ iss: ISSUER_DID, status: { status_list: { idx: 0, uri: STATUS_LIST_URI } } }, { fetchText: async () => resigned, didFetch });
+  assert.equal(r.result, 'unknown');
+  assert.match(r.reason, /entry count/);
+});
+
 test('the published DID document and status list agree with each other', async () => {
   const doc = JSON.parse(fs.readFileSync(new URL('../site/did.json', import.meta.url), 'utf8'));
   const list = fs.readFileSync(new URL('../site/status/tet-eligibility.jwt', import.meta.url), 'utf8');
@@ -107,4 +143,7 @@ test('the published DID document and status list agree with each other', async (
     const ref = { iss: ISSUER_DID, status: { status_list: { idx: c.status_index, uri: STATUS_LIST_URI } } };
     assert.equal((await checkStatus(ref, { fetchText, didFetch })).result, c.revoked ? 'revoked' : 'not_revoked', c.certificate);
   }
+  const firstFree = Math.max(...manifest.credentials.map((c) => c.status_index)) + 1;
+  const free = { iss: ISSUER_DID, status: { status_list: { idx: firstFree, uri: STATUS_LIST_URI } } };
+  assert.equal((await checkStatus(free, { fetchText, didFetch })).result, 'unknown', `unallocated index ${firstFree}`);
 });
