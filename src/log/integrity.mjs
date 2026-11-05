@@ -1,5 +1,5 @@
 import { firstBreak } from './chain.mjs';
-import { merkleRoot } from './merkle.mjs';
+import { merkleRoot, batchRoot } from './merkle.mjs';
 
 /**
  * Checks the whole stored log: the hash chain from the genesis constant, the tail against the head checkpoint,
@@ -33,7 +33,11 @@ export function logProblems(store) {
     const contiguous = rows.length === b.size && b.last_seq - b.first_seq + 1 === b.size
       && seqs.every((s, i) => s === b.first_seq + i);
     if (!contiguous) problems.push(`batch ${b.batch_id} does not hold seq ${b.first_seq}–${b.last_seq} exactly`);
-    else if (merkleRoot(rows.map((r) => r.entry_hash)) !== b.root) problems.push(`batch ${b.batch_id} root does not recompute`);
+    else {
+      const tree = merkleRoot(rows.map((r) => r.entry_hash));
+      const header = { batch_id: b.batch_id, first_seq: b.first_seq, size: b.size, closed_at: b.closed_at };
+      if (tree !== b.tree_root || batchRoot(header, tree) !== b.root) problems.push(`batch ${b.batch_id} root does not recompute`);
+    }
     next = b.last_seq + 1;
   }
   const loose = entries.filter((e) => e.batch_id === null);

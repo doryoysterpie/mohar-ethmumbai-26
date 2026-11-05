@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { nextEntry, firstBreak } from './chain.mjs';
+import { batchRoot } from './merkle.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS entries (
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS batches (
   first_seq INTEGER NOT NULL,
   last_seq INTEGER NOT NULL,
   size INTEGER NOT NULL,
+  tree_root TEXT,
   root TEXT NOT NULL,
   closed_at TEXT NOT NULL,
   sepolia_tx TEXT,
@@ -57,6 +59,7 @@ export function openLogStore(file, options = {}) {
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
   if (!db.prepare('PRAGMA table_info(head)').all().some((c) => c.name === 'mac')) db.exec('ALTER TABLE head ADD COLUMN mac TEXT');
+  if (!db.prepare('PRAGMA table_info(batches)').all().some((c) => c.name === 'tree_root')) db.exec('ALTER TABLE batches ADD COLUMN tree_root TEXT');
 
   const last = db.prepare('SELECT seq, entry_hash FROM entries ORDER BY seq DESC LIMIT 1');
   const byCommitment = db.prepare('SELECT * FROM entries WHERE entry_type = ? AND commitment = ?');
@@ -135,11 +138,15 @@ export function openLogStore(file, options = {}) {
     batch: (batchId) => db.prepare('SELECT * FROM batches WHERE batch_id = ?').get(batchId),
     batches: () => db.prepare('SELECT * FROM batches ORDER BY batch_id').all(),
 
-    /** Records a closed batch over the given consecutive entries. */
-    closeBatch: db.transaction((entries, root, closedAt) => {
-      const info = db.prepare('INSERT INTO batches (first_seq, last_seq, size, root, closed_at) VALUES (?, ?, ?, ?, ?)')
-        .run(entries[0].seq, entries.at(-1).seq, entries.length, root, closedAt);
-      const id = Number(info.lastInsertRowid);
+    /**
+     * Records a closed batch over the given consecutive entries. Its root commits to the batch header (id, first seq,
+     * size, closing time) and to the Merkle tree root over its entries.
+     */
+    closeBatch: db.transaction((entries, treeRoot, closedAt) => {
+      const id = (db.prepare('SELECT max(batch_id) AS m FROM batches').get().m ?? 0) + 1;
+      const root = batchRoot({ batch_id: id, first_seq: entries[0].seq, size: entries.length, closed_at: closedAt }, treeRoot);
+      db.prepare('INSERT INTO batches (batch_id, first_seq, last_seq, size, tree_root, root, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(id, entries[0].seq, entries.at(-1).seq, entries.length, treeRoot, root, closedAt);
       const mark = db.prepare('UPDATE entries SET batch_id = ? WHERE seq = ? AND batch_id IS NULL');
       for (const e of entries) {
         if (mark.run(id, e.seq).changes !== 1) throw new Error(`entry ${e.seq} is already in a batch`);
