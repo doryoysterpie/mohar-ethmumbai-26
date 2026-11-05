@@ -35,13 +35,21 @@ function tokenMatches(given, expected) {
  * HTTP service for a school:
  *   GET  /nonce                 single-use nonce for a presentation
  *   POST /present               { presentation, consent } -> 200 receipt, or 422 typed refusal
- *   GET  /status/{holder_did}   latest receipt and re-check summary
- *   POST /recheck               term status check of every active receipt; requires `authorization: Bearer <adminToken>`
+ *   GET  /status/{holder_did}   latest receipt and re-check summary; requires the staff token
+ *   POST /recheck               term status check of every active receipt; requires the staff token
  *   GET  /export/{receipt_id}   not in this version (501)
+ * The staff token is sent as `authorization: Bearer <adminToken>`; both staff routes are disabled when no token is set.
  * @param {ReturnType<typeof import('./school.mjs').createSchool>} school
- * @param {{ adminToken?: string }} [options] /recheck is disabled when no admin token is set
+ * @param {{ adminToken?: string }} [options]
  */
 export function createServer(school, options = {}) {
+  /** Sends 403 or 401 and returns false unless the request carries the staff token. */
+  const staff = (req, res) => {
+    if (!options.adminToken) { send(res, 403, { error: 'staff routes are disabled on this service' }); return false; }
+    const auth = req.headers.authorization ?? '';
+    if (!tokenMatches(auth.startsWith('Bearer ') ? auth.slice(7) : '', options.adminToken)) { send(res, 401, { error: 'unauthorized' }); return false; }
+    return true;
+  };
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
@@ -54,13 +62,12 @@ export function createServer(school, options = {}) {
         return send(res, out.ok ? 200 : 422, out);
       }
       if (req.method === 'GET' && parts[0] === 'status' && parts.length === 2) {
+        if (!staff(req, res)) return undefined;
         const s = school.status(parts[1]);
         return s ? send(res, 200, s) : send(res, 404, { error: 'no receipt for this holder' });
       }
       if (req.method === 'POST' && url.pathname === '/recheck') {
-        if (!options.adminToken) return send(res, 403, { error: 'term check is disabled on this service' });
-        const auth = req.headers.authorization ?? '';
-        if (!tokenMatches(auth.startsWith('Bearer ') ? auth.slice(7) : '', options.adminToken)) return send(res, 401, { error: 'unauthorized' });
+        if (!staff(req, res)) return undefined;
         return send(res, 200, { rechecks: await school.recheck() });
       }
       if (req.method === 'GET' && parts[0] === 'export' && parts.length === 2) return send(res, 501, { error: 'export is not in this version' });

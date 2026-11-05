@@ -3,7 +3,7 @@
 //   keygen      new key in .keys/school.json; prints the school's did:key
 //   did         prints the school's did:key
 //   serve       runs the verifier service on PORT (default 8080), store at MOHAR_SCHOOL_DB (default school.sqlite);
-//               posts receipt and re-check commitments to MOHAR_LOG_URL when set; POST /recheck needs MOHAR_ADMIN_TOKEN
+//               posts receipt and re-check commitments to MOHAR_LOG_URL when set; /status and /recheck need MOHAR_ADMIN_TOKEN
 //   recheck     runs the term status check against the local store and prints the re-check receipts
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,7 +42,7 @@ if (cmd === 'keygen') {
   const s = school();
   const port = Number(process.env.PORT ?? 8080);
   createServer(s, { adminToken: process.env.MOHAR_ADMIN_TOKEN }).listen(port, () => {
-    console.error(`school ${s.did} listening on ${port}${process.env.MOHAR_ADMIN_TOKEN ? '' : ' (term check over HTTP disabled)'}`);
+    console.error(`school ${s.did} listening on ${port}${process.env.MOHAR_ADMIN_TOKEN ? '' : ' (staff routes disabled)'}`);
   });
 } else if (cmd === 'recheck') {
   process.stdout.write(`${JSON.stringify(await school().recheck(), null, 2)}\n`);

@@ -17,7 +17,8 @@ test('present, replay and status over HTTP', async () => {
   w.consent = await (await import('../src/holder/consent.mjs')).signConsent({
     holderDid: w.holderDid, holderPrivateJwk: w.holder.privateJwk, schoolDid: w.school.did, now: w.now,
   });
-  const s = await serve(w);
+  const s = await serve(w, { adminToken: 'staff-token-0123456789' });
+  const staff = { authorization: 'Bearer staff-token-0123456789' };
   try {
     const { nonce } = await (await fetch(`${s.base}/nonce`)).json();
     const presentation = await w.present({ nonce });
@@ -26,10 +27,12 @@ test('present, replay and status over HTTP', async () => {
     const again = await post(`${s.base}/present`, JSON.stringify({ presentation, consent: w.consent }));
     assert.equal(again.status, 422);
     assert.equal((await again.json()).refusal, 'nonce_stale');
-    const st = await fetch(`${s.base}/status/${encodeURIComponent(w.holderDid)}`);
+    const statusUrl = `${s.base}/status/${encodeURIComponent(w.holderDid)}`;
+    assert.equal((await fetch(statusUrl)).status, 401);
+    const st = await fetch(statusUrl, { headers: staff });
     assert.equal(st.status, 200);
     assert.equal((await st.json()).status_result, 'not_revoked');
-    assert.equal((await fetch(`${s.base}/status/did:key:z6Mkunknown`)).status, 404);
+    assert.equal((await fetch(`${s.base}/status/did:key:z6Mkunknown`, { headers: staff })).status, 404);
   } finally {
     s.close();
   }
@@ -40,6 +43,7 @@ test('the term check over HTTP needs the admin token, and is off without one', a
   const off = await serve(w);
   try {
     assert.equal((await post(`${off.base}/recheck`, '{}')).status, 403);
+    assert.equal((await fetch(`${off.base}/status/${encodeURIComponent(w.holderDid)}`)).status, 403);
   } finally {
     off.close();
   }

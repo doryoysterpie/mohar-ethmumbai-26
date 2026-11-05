@@ -57,11 +57,11 @@ node bin/school.mjs recheck                                  # term check agains
 |---|---|---|
 | GET | `/nonce` | `{ nonce, expires_at }`, valid for ten minutes, usable once |
 | POST | `/present` | `{ presentation, consent }` → 200 with the receipt, or 422 with the refusal |
-| GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert |
-| POST | `/recheck` | term check; needs `authorization: Bearer <MOHAR_ADMIN_TOKEN>`, off when the token is not set |
+| GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert; staff token |
+| POST | `/recheck` | term check; staff token |
 | GET | `/export/{receipt_id}` | not in this version |
 
-Receipt and re-check commitments go to the log service when `MOHAR_LOG_URL` is set.
+Staff routes take `authorization: Bearer <MOHAR_ADMIN_TOKEN>` and are off when the token is not set. Receipt and re-check commitments go to the log service when `MOHAR_LOG_URL` is set.
 
 ## Licence
 
