@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { generatePrivateKey } from 'viem/accounts';
 import { sha256Hex } from '../src/shared/encoding.mjs';
 import { firstBreak, GENESIS, entryHash } from '../src/log/chain.mjs';
 import { logProblems } from '../src/log/integrity.mjs';
-import { merkleRoot, merklePath, rootFromPath, EMPTY_LEAF, leafHash } from '../src/log/merkle.mjs';
+import { merkleRoot, merklePath, rootFromPath, EMPTY_LEAF, leafHash, batchRoot } from '../src/log/merkle.mjs';
 import { openLogStore } from '../src/log/store.mjs';
 import { createLog } from '../src/log/service.mjs';
 import { createLogServer } from '../src/log/server.mjs';
@@ -185,7 +188,8 @@ test('a proof gives the entry, its path and the batch; before batching it gives 
   assert.equal(log.proof(c).batch, null);
   await log.closeBatch();
   const p = log.proof(c);
-  assert.equal(rootFromPath(p.entry.entry_hash, p.merkle_path), p.batch.root);
+  assert.equal(rootFromPath(p.entry.entry_hash, p.merkle_path), p.batch.tree_root);
+  assert.equal(batchRoot({ batch_id: p.batch.batch_id, first_seq: p.batch.first_seq, size: p.batch.size, closed_at: p.batch.closed_at }, p.batch.tree_root), p.batch.root);
   assert.equal(log.proof(sha256Hex('never committed')), null);
   assert.equal(log.proof('not a hash'), null);
 });
@@ -264,8 +268,8 @@ test('the same commitment under two entry types gives two proofs, each to its ow
   const receipt = log.proof(c, 'receipt');
   assert.equal(consent.entry.entry_type, 'consent');
   assert.equal(receipt.entry.entry_type, 'receipt');
-  assert.equal(rootFromPath(consent.entry.entry_hash, consent.merkle_path), b1.root);
-  assert.equal(rootFromPath(receipt.entry.entry_hash, receipt.merkle_path), b2.root);
+  assert.equal(batchRoot({ batch_id: b1.batch_id, first_seq: b1.first_seq, size: b1.size, closed_at: b1.closed_at }, rootFromPath(consent.entry.entry_hash, consent.merkle_path)), b1.root);
+  assert.equal(batchRoot({ batch_id: b2.batch_id, first_seq: b2.first_seq, size: b2.size, closed_at: b2.closed_at }, rootFromPath(receipt.entry.entry_hash, receipt.merkle_path)), b2.root);
   assert.throws(() => log.proof(c), (e) => e.code === 'ambiguous' && e.types.join() === 'consent,receipt');
   assert.equal(log.proof(c, 'recheck'), null);
 
@@ -282,4 +286,67 @@ test('the same commitment under two entry types gives two proofs, each to its ow
   } finally {
     server.close();
   }
+});
+
+test('deleting the final unbatched entry and the head checkpoint, then restarting, is refused', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mohar-head-'));
+  const file = path.join(dir, 'log.sqlite');
+  try {
+    let store = openLogStore(file);
+    let t = Date.UTC(2026, 10, 6, 10, 0, 0);
+    for (let i = 0; i < 3; i += 1) store.append('receipt', sha256Hex(`r${i}`), new Date((t += 1000)).toISOString());
+    store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+    store.db.prepare('DELETE FROM head').run();
+    store.close();
+    store = openLogStore(file);
+    assert.deepEqual(logProblems(store), ['head checkpoint is missing']);
+    assert.throws(() => store.append('receipt', sha256Hex('replacement'), new Date(t + 5000).toISOString()), /head checkpoint is missing/);
+    assert.equal(store.db.prepare('SELECT count(*) AS n FROM entries WHERE seq = 2').get().n, 0);
+    store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('with a head key, a checkpoint rewritten without the key is refused', () => {
+  const key = 'cd'.repeat(32);
+  const store = openLogStore(':memory:', { headKey: key });
+  let t = Date.UTC(2026, 10, 6, 10, 0, 0);
+  for (let i = 0; i < 3; i += 1) store.append('receipt', sha256Hex(`r${i}`), new Date((t += 1000)).toISOString());
+  store.db.prepare('DELETE FROM entries WHERE seq = 2').run();
+  store.db.prepare('UPDATE head SET seq = 1, entry_hash = (SELECT entry_hash FROM entries WHERE seq = 1)').run();
+  assert.deepEqual(logProblems(store), ['head checkpoint is not authenticated by the head key']);
+  assert.throws(() => store.append('receipt', sha256Hex('replacement'), new Date(t + 5000).toISOString()), /not authenticated/);
+});
+
+test('adopting a head checkpoint is explicit, one-time, and refused over a broken chain', () => {
+  const store = openLogStore(':memory:');
+  store.append('receipt', sha256Hex('a'), '2026-11-06T10:00:00.000Z');
+  store.append('receipt', sha256Hex('b'), '2026-11-06T10:00:01.000Z');
+  assert.throws(() => store.adoptHead(), /already has a valid head checkpoint/);
+  store.db.prepare('DELETE FROM head').run();
+  store.db.prepare('UPDATE entries SET ts = ? WHERE seq = 0').run('2026-01-01T00:00:00.000Z');
+  assert.throws(() => store.adoptHead(), /chain is broken/);
+  store.db.prepare('UPDATE entries SET ts = ? WHERE seq = 0').run('2026-11-06T10:00:00.000Z');
+  assert.deepEqual(store.adoptHead().seq, 1);
+  assert.deepEqual(logProblems(store), []);
+});
+
+test('the anchored root commits to batch id, first seq, size and closing time (fixed vector)', async () => {
+  assert.equal(batchRoot({ batch_id: 1, first_seq: 0, size: 6, closed_at: '2026-11-06T10:00:00.000Z' }, '44'.repeat(32)),
+    '8e2cdb140d1572454151cc8f383bb8a078bc81520ff345afdefb7f61fc621e43');
+  const { log } = filled(3);
+  const b = await log.closeBatch();
+  const header = { batch_id: b.batch_id, first_seq: b.first_seq, size: b.size, closed_at: b.closed_at };
+  assert.equal(batchRoot(header, b.tree_root), b.root);
+  for (const [field, value] of [['batch_id', 2], ['first_seq', 1], ['size', 2], ['closed_at', '2026-11-06T10:00:01.000Z']]) {
+    assert.notEqual(batchRoot({ ...header, [field]: value }, b.tree_root), b.root, field);
+  }
+});
+
+test('a stored batch header changed after closing is detected', async () => {
+  const { store, log } = filled(3);
+  await log.closeBatch();
+  store.db.prepare('UPDATE batches SET closed_at = ? WHERE batch_id = 1').run('2026-01-01T00:00:00.000Z');
+  assert.deepEqual(logProblems(store), ['batch 1 root does not recompute']);
 });

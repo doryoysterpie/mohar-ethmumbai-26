@@ -4,10 +4,13 @@
 //   batch      closes and anchors a batch now, prints it
 //   anchor     anchors every closed batch still missing a Sepolia transaction or an OpenTimestamps proof
 //   upgrade    upgrades pending OpenTimestamps proofs, prints their states
+//   adopt-head one-time, explicit: takes the current tail as the head checkpoint of a log that has none (or none under
+//              the current head key); refuses unless the chain is intact
 //   check      re-checks the chain, the head checkpoint and every closed batch root; --anchors also compares each
 //              anchored root with its Sepolia calldata; prints the problems or "intact"
 // Environment: MOHAR_LOG_DB (default log.sqlite), MOHAR_ADMIN_TOKEN (operator routes), MOHAR_SEPOLIA_KEY (0x… operator key),
-// MOHAR_SEPOLIA_RPCS (comma-separated, first is preferred), MOHAR_OTS=off to skip OpenTimestamps.
+// MOHAR_SEPOLIA_RPCS (comma-separated, first is preferred), MOHAR_OTS=off to skip OpenTimestamps,
+// MOHAR_LOG_HEAD_KEY (32-byte hex key that authenticates the head checkpoint; kept outside the database).
 // Keep secrets in a local .env file and run with: node --env-file=.env bin/log.mjs <command>
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +21,7 @@ import { logProblems } from '../src/log/integrity.mjs';
 import { readAnchor } from '../src/anchor/sepolia.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const store = openLogStore(process.env.MOHAR_LOG_DB ?? path.join(ROOT, 'log.sqlite'));
+const store = openLogStore(process.env.MOHAR_LOG_DB ?? path.join(ROOT, 'log.sqlite'), { headKey: process.env.MOHAR_LOG_HEAD_KEY || undefined });
 
 function sepoliaConfig() {
   const key = process.env.MOHAR_SEPOLIA_KEY;
@@ -60,6 +63,8 @@ if (cmd === 'serve') {
   print(await log.anchorPending());
 } else if (cmd === 'upgrade') {
   print(await log.upgradePending());
+} else if (cmd === 'adopt-head') {
+  print(store.adoptHead());
 } else if (cmd === 'check') {
   const problems = logProblems(store);
   if (process.argv.includes('--anchors')) {
@@ -77,6 +82,6 @@ if (cmd === 'serve') {
   process.stdout.write(problems.length ? `${problems.join('\n')}\n` : 'intact\n');
   process.exit(problems.length ? 1 : 0);
 } else {
-  console.error('usage: log serve | batch | anchor | upgrade | check');
+  console.error('usage: log serve | batch | anchor | upgrade | check [--anchors] | adopt-head');
   process.exit(2);
 }
