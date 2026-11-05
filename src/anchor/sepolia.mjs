@@ -93,6 +93,17 @@ export async function readAnchor({ txHash, rpcUrls }) {
   };
 }
 
+/**
+ * Chain id the RPCs report (first that answers). The client is configured for Sepolia, but does not itself check that
+ * the RPC is on Sepolia, so a verifier asks.
+ * @param {string[]} rpcUrls
+ * @returns {Promise<number>}
+ */
+export async function chainIdOf(rpcUrls) {
+  const { value } = await firstOk(rpcUrls, (url) => publicClient(url).getChainId());
+  return value;
+}
+
 /** Calldata of a signed raw transaction, without 0x. */
 export function calldataOf(serialized) {
   return (parseTransaction(serialized).data ?? '0x').replace(/^0x/, '').toLowerCase();

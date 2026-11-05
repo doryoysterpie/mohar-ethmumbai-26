@@ -1,0 +1,133 @@
+// Standalone verifier for an export bundle. It reads only the bundle, a public Sepolia RPC and a source of Bitcoin
+// block headers; it never contacts the platform or the school.
+import { sha256Hex } from '../shared/encoding.mjs';
+import { jwkFromDidKey } from '../shared/keys.mjs';
+import { decodeJws, verifyJws } from '../shared/jws.mjs';
+import { entryHash } from '../log/chain.mjs';
+import { rootFromPath } from '../log/merkle.mjs';
+import { readAnchor, chainIdOf } from '../anchor/sepolia.mjs';
+import { otsState, otsBitcoinAttestations } from '../anchor/ots.mjs';
+
+export const SEPOLIA_CHAIN_ID = 11155111;
+const TYP = { receipt: 'receipt+jwt', recheck: 'recheck+jwt' };
+
+/** @typedef {{ check: string, result: 'pass' | 'fail' | 'pending', detail: string }} CheckResult */
+
+const pass = (check, detail) => ({ check, result: 'pass', detail });
+const fail = (check, detail) => ({ check, result: 'fail', detail });
+
+/** 1. The record is signed by the school did:key it names, resolved offline. */
+async function checkSignature(b) {
+  try {
+    const typ = TYP[b.record_type];
+    if (!typ) return fail('signature', `unknown record type ${b.record_type}`);
+    const { header, payload } = decodeJws(b.record);
+    const school = payload.verifier;
+    if (typeof school !== 'string' || !school.startsWith('did:key:')) return fail('signature', 'record names no school did:key');
+    if (header.kid !== `${school}#${school.slice('did:key:'.length)}`) return fail('signature', 'record key id is not the school did:key');
+    await verifyJws(b.record, jwkFromDidKey(school), typ);
+    return pass('signature', `signed by ${school}`);
+  } catch (e) {
+    return fail('signature', `school signature invalid: ${e.message}`);
+  }
+}
+
+/** 2. The log entry commits to this record and its hash recomputes. */
+function checkEntry(b) {
+  try {
+    const e = b.entry;
+    if (e.entry_type !== b.record_type) return fail('entry', `log entry type ${e.entry_type} is not ${b.record_type}`);
+    if (e.commitment !== sha256Hex(b.record)) return fail('entry', 'log entry commitment is not the SHA-256 of the record');
+    if (entryHash(e.prev_hash, e.entry_type, e.commitment, e.ts) !== e.entry_hash) return fail('entry', 'entry_hash does not recompute');
+    return pass('entry', `entry ${e.seq} recomputes`);
+  } catch (e) {
+    return fail('entry', `log entry malformed: ${e.message}`);
+  }
+}
+
+/** 3. The entry's Merkle path leads to the batch root. */
+function checkMerkle(b) {
+  try {
+    if (b.merkle_path.size !== b.batch.size) return fail('merkle', 'path size is not the batch size');
+    const root = rootFromPath(b.entry.entry_hash, b.merkle_path);
+    if (root !== b.batch.root) return fail('merkle', 'Merkle path leads to a different root');
+    return pass('merkle', `entry ${b.merkle_path.index} of ${b.batch.size} in batch ${b.batch.batch_id}`);
+  } catch (e) {
+    return fail('merkle', `Merkle path invalid: ${e.message}`);
+  }
+}
+
+/** 4. The Sepolia transaction exists and its calldata is the batch root. */
+async function checkSepolia(b, rpcUrls) {
+  if (!b.sepolia?.tx_hash) return fail('sepolia', 'bundle has no Sepolia anchor');
+  if (b.sepolia.chain_id !== SEPOLIA_CHAIN_ID) return fail('sepolia', `anchor is on chain ${b.sepolia.chain_id}, not Sepolia`);
+  if (!rpcUrls?.length) return fail('sepolia', 'no Sepolia RPC configured for the check');
+  try {
+    const chain = await chainIdOf(rpcUrls);
+    if (chain !== SEPOLIA_CHAIN_ID) return fail('sepolia', `RPC is on chain ${chain}, not Sepolia`);
+    const tx = await readAnchor({ txHash: b.sepolia.tx_hash, rpcUrls });
+    if (tx.calldata !== b.batch.root) return fail('sepolia', 'Sepolia calldata does not match the batch root');
+    if (tx.block_number === null) return fail('sepolia', 'Sepolia transaction is not in a block yet');
+    return pass('sepolia', `root in tx ${b.sepolia.tx_hash}, block ${tx.block_number}`);
+  } catch (e) {
+    return fail('sepolia', `Sepolia transaction not found: ${e.message}`);
+  }
+}
+
+/** 5. The OpenTimestamps proof is for the batch root, and any Bitcoin attestation matches its block header. */
+async function checkOts(b, bitcoinHeader) {
+  if (!b.ots?.proof) return fail('ots', 'bundle has no OpenTimestamps proof');
+  try {
+    const proof = Buffer.from(b.ots.proof, 'base64');
+    const state = otsState(proof, b.batch.root);
+    if (state.state === 'pending') {
+      return { check: 'ots', result: 'pending', detail: `calendar attestation only (${state.calendars.length} calendars); no Bitcoin block yet` };
+    }
+    const atts = otsBitcoinAttestations(proof, b.batch.root);
+    for (const a of atts) {
+      const header = await bitcoinHeader(a.height);
+      if (header.merkleroot === Buffer.from(a.msg, 'hex').reverse().toString('hex')) {
+        return pass('ots', `root in Bitcoin block ${a.height} (${new Date(header.time * 1000).toISOString()})`);
+      }
+    }
+    return fail('ots', `OTS attestation does not match Bitcoin block ${atts.map((a) => a.height).join(', ')}`);
+  } catch (e) {
+    return fail('ots', `OTS proof invalid: ${e.message}`);
+  }
+}
+
+/** Bitcoin block header by height from a public Esplora API (default blockstream.info). Returns { merkleroot, time }. */
+export function esploraHeaders(base = 'https://blockstream.info/api') {
+  return async (height) => {
+    const h = await fetch(`${base}/block-height/${height}`, { signal: AbortSignal.timeout(15_000) });
+    if (!h.ok) throw new Error(`no Bitcoin block at height ${height}`);
+    const hash = (await h.text()).trim();
+    const r = await fetch(`${base}/block/${hash}`, { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) throw new Error(`Bitcoin block ${hash} not found`);
+    const blk = await r.json();
+    return { merkleroot: blk.merkle_root, time: blk.timestamp };
+  };
+}
+
+/**
+ * Runs the five checks on a bundle. Each check runs whatever the others found.
+ * `ok` is true when signature, entry, merkle and sepolia pass and ots passes or is pending.
+ * @param {any} bundle
+ * @param {{ rpcUrls?: string[], bitcoinHeader?: (height: number) => Promise<{ merkleroot: string, time: number }> }} [options]
+ * @returns {Promise<{ ok: boolean, checks: CheckResult[] }>}
+ */
+export async function verifyBundle(bundle, options = {}) {
+  if (bundle?.format !== 'mohar-bundle/1') {
+    const r = fail('format', `not a mohar-bundle/1 bundle`);
+    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots'].map((check) => ({ ...r, check })) };
+  }
+  const checks = [
+    await checkSignature(bundle),
+    checkEntry(bundle),
+    checkMerkle(bundle),
+    await checkSepolia(bundle, options.rpcUrls),
+    await checkOts(bundle, options.bitcoinHeader ?? esploraHeaders()),
+  ];
+  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks[4].result !== 'fail';
+  return { ok, checks };
+}

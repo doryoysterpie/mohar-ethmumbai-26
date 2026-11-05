@@ -59,7 +59,7 @@ node bin/school.mjs recheck                                  # term check agains
 | POST | `/present` | `{ presentation, consent }` → 200 with the receipt, or 422 with the refusal |
 | GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert; staff token |
 | POST | `/recheck` | term check; staff token |
-| GET | `/export/{receipt_id}` | not in this version |
+| GET | `/export/{id}` | export bundle for a receipt or re-check receipt (needs `MOHAR_LOG_URL`); 409 while its batch is open |
 
 Staff routes take `authorization: Bearer <MOHAR_ADMIN_TOKEN>` and are off when the token is not set. Receipt and re-check commitments go to the log service when `MOHAR_LOG_URL` is set.
 
@@ -90,6 +90,24 @@ node bin/log.mjs check                     # re-check the hash chain
 | GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open |
 | GET | `/batches/{id}` | batch summary |
 | POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
+
+## Inspector
+
+An export bundle holds the signed receipt or re-check receipt, its log entry, its Merkle path, the batch root, the Sepolia transaction and the OpenTimestamps proof. It holds no presentation, no consent and no personal data.
+
+`bin/inspect.mjs` checks a bundle on its own, with no connection to the school or the log service:
+
+1. signature: the record is signed by the school did:key it names, resolved from the identifier itself;
+2. entry: the log entry commits to the SHA-256 of the record and its `entry_hash` recomputes;
+3. merkle: the entry's path leads to the batch root;
+4. sepolia: the transaction's calldata on Sepolia is the batch root, read through an RPC that reports chain 11155111;
+5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`.
+
+```
+node bin/inspect.mjs bundle.json        # MOHAR_SEPOLIA_RPCS and MOHAR_ESPLORA_URL override the public defaults
+```
+
+Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass and check 5 passes or is pending. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
 
 ## Licence
 

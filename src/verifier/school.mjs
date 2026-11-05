@@ -12,6 +12,7 @@ import { resolveIssuerKey } from '../issuer/did-web.mjs';
 import { verifyConsent, didKeyKid } from '../holder/consent.mjs';
 import { commitRecord } from '../log/client.mjs';
 import { nextTermBoundary } from './calendar.mjs';
+import { fetchProof, buildBundle } from './export.mjs';
 
 export const RECEIPT_TYP = 'receipt+jwt';
 export const RECHECK_TYP = 'recheck+jwt';
@@ -217,6 +218,27 @@ export function createSchool(config) {
         valid_until: c.valid_until,
       });
       return { ok: true, receipt_id: receiptId, receipt: receiptJws, status_reason: status.reason, log: await log('receipt', receiptJws) };
+    },
+
+    /**
+     * Export bundle for a receipt or re-check receipt id, built from the signed record and the log's proof.
+     * @returns {Promise<{ ok: true, bundle: object } | { ok: false, code: number, error: string }>}
+     */
+    async exportBundle(id) {
+      const r = store.receipt(id);
+      const rc = r ? null : store.recheckById(id);
+      if (!r && !rc) return { ok: false, code: 404, error: 'no receipt or re-check with this id' };
+      if (!config.logUrl) return { ok: false, code: 503, error: 'no log service configured' };
+      const record = r ? r.receipt : rc.recheck;
+      let proof;
+      try {
+        proof = await fetchProof({ logUrl: config.logUrl, commitment: sha256Hex(record), fetch: config.logFetch });
+      } catch (e) {
+        return { ok: false, code: 502, error: `log service unavailable: ${e.message}` };
+      }
+      if (!proof) return { ok: false, code: 409, error: 'the log has no entry for this record' };
+      if (!proof.batch) return { ok: false, code: 409, error: 'the record is not in a closed batch yet' };
+      return { ok: true, bundle: buildBundle({ record, recordType: r ? 'receipt' : 'recheck', proof }) };
     },
 
     /** Latest receipt and re-check for a holder, or null. */

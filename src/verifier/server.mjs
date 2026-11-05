@@ -37,7 +37,7 @@ function tokenMatches(given, expected) {
  *   POST /present               { presentation, consent } -> 200 receipt, or 422 typed refusal
  *   GET  /status/{holder_did}   latest receipt and re-check summary; requires the staff token
  *   POST /recheck               term status check of every active receipt; requires the staff token
- *   GET  /export/{receipt_id}   not in this version (501)
+ *   GET  /export/{id}           export bundle for a receipt or re-check receipt id (no token; the bundle carries no personal data)
  * The staff token is sent as `authorization: Bearer <adminToken>`; both staff routes are disabled when no token is set.
  * @param {ReturnType<typeof import('./school.mjs').createSchool>} school
  * @param {{ adminToken?: string }} [options]
@@ -70,7 +70,10 @@ export function createServer(school, options = {}) {
         if (!staff(req, res)) return undefined;
         return send(res, 200, { rechecks: await school.recheck() });
       }
-      if (req.method === 'GET' && parts[0] === 'export' && parts.length === 2) return send(res, 501, { error: 'export is not in this version' });
+      if (req.method === 'GET' && parts[0] === 'export' && parts.length === 2) {
+        const out = await school.exportBundle(parts[1]);
+        return out.ok ? send(res, 200, out.bundle) : send(res, out.code, { error: out.error });
+      }
       return send(res, 404, { error: 'not found' });
     } catch (e) {
       const code = typeof e.code === 'number' ? e.code : 500;
