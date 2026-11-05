@@ -1,16 +1,19 @@
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { decodeSdJwt } from '@sd-jwt/core';
 import { signerFor, publicOf, didKeyFromJwk } from '../shared/keys.mjs';
-import { hasher } from '../issuer/credential.mjs';
+import { hasher, verifyCredential } from '../issuer/credential.mjs';
+import { ISSUER_DID, VCT, VISIBLE_CLAIMS } from '../issuer/profile.mjs';
 import { verifyConsent, consentHash } from './consent.mjs';
 
 /**
  * Builds a presentation of `credential` that discloses exactly the claims in the consent's scope,
  * with a key-binding JWT carrying `aud` (the school), `nonce` (from the school), `iat` and `consent_hash`.
- * Refuses when the consent is not the holder's, is not for this school, or is not valid now,
- * or when the credential is not bound to the holder's key.
+ * Refuses when the consent is not the holder's, is not for this school, or is not valid now; when the credential
+ * does not verify against the expected issuer, has another type, carries an always-visible claim outside
+ * VISIBLE_CLAIMS, or is not bound to the holder's key.
  * @param {{ credential: string, consent: string, holderPrivateJwk: import('../shared/keys.mjs').Ed25519Jwk,
- *   nonce: string, aud: string, now?: Date }} p
+ *   nonce: string, aud: string, now?: Date, expectedIssuer?: string, expectedVct?: string,
+ *   didFetch?: import('web-did-resolver').WebDidFetch }} p
  * @returns {Promise<string>}
  */
 export async function buildPresentation(p) {
@@ -23,6 +26,16 @@ export async function buildPresentation(p) {
   if (consent.data_fiduciary !== p.aud) throw new Error('consent is not for this school');
 
   const decoded = await decodeSdJwt(p.credential, hasher);
+  const visible = Object.keys(decoded.jwt.payload ?? {});
+  const unexpected = visible.filter((k) => !VISIBLE_CLAIMS.includes(k));
+  if (unexpected.length) throw new Error(`credential carries always-visible claims outside the allowed set: ${unexpected.join(', ')}`);
+  try {
+    await verifyCredential(p.credential, { didFetch: p.didFetch, expectedIssuer: p.expectedIssuer ?? ISSUER_DID });
+  } catch (e) {
+    throw new Error(`credential does not verify against the expected issuer: ${e.message}`);
+  }
+  if (decoded.jwt.payload.vct !== (p.expectedVct ?? VCT)) throw new Error('credential is not an eligibility credential');
+  if (decoded.jwt.payload.sub !== holderDid) throw new Error('credential subject is not this holder');
   const cnf = /** @type {any} */ (decoded.jwt.payload)?.cnf?.jwk;
   if (!cnf || cnf.x !== holderPublic.x) throw new Error('credential is not bound to this holder key');
   if (decoded.kbJwt) throw new Error('credential already carries a key binding');
