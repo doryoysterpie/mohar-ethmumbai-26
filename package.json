@@ -25,6 +25,8 @@
     "web-did-resolver": "3.2.0"
   },
   "devDependencies": {
+    "@noble/hashes": "1.8.0",
+    "buffer": "6.0.3",
     "esbuild": "0.28.2"
   }
 }

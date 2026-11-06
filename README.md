@@ -112,6 +112,16 @@ node bin/inspect.mjs bundle.json --certificate certificate.json --certificate-sa
 
 Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass, check 6 passes or is not supplied, and check 5 passes or is pending. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
 
+### Inspector page
+
+`site/inspector/index.html` is the same verifier as one static page, built for the browser:
+
+```
+node bin/build-inspector.mjs            # writes site/inspector/index.html (not tracked; built for publishing)
+```
+
+The page loads `site/sample/bundle.json` on open, and takes a pasted bundle or a chosen file. It contacts only the public Sepolia RPCs and the public Bitcoin block explorer. It shows the five checks; the certificate-binding line appears only when a certificate and salt are entered. OpenTimestamps proofs are read in the page by `src/anchor/ots-parse.mjs`, which has no dependency on Node built-ins.
+
 ## Licence
 
 Apache-2.0. See `LICENSE`.

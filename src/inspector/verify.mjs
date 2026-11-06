@@ -6,7 +6,7 @@ import { decodeJws, verifyJws } from '../shared/jws.mjs';
 import { entryHash } from '../log/chain.mjs';
 import { rootFromPath, batchRoot } from '../log/merkle.mjs';
 import { readAnchorFrom } from '../anchor/sepolia.mjs';
-import { otsState, otsBitcoinAttestations } from '../anchor/ots.mjs';
+import { otsProofState } from '../anchor/ots-parse.mjs';
 import { certificateCommitment } from '../issuer/credential.mjs';
 
 export const SEPOLIA_CHAIN_ID = 11155111;
@@ -95,12 +95,12 @@ async function checkSepolia(b, rpcUrls) {
 async function checkOts(b, bitcoinHeader) {
   if (!b.ots?.proof) return fail('ots', 'bundle has no OpenTimestamps proof');
   try {
-    const proof = Buffer.from(b.ots.proof, 'base64');
-    const state = otsState(proof, b.batch.root);
+    const proof = Uint8Array.from(atob(b.ots.proof), (c) => c.charCodeAt(0));
+    const state = otsProofState(proof, b.batch.root);
     if (state.state === 'pending') {
       return { check: 'ots', result: 'pending', detail: `calendar attestation only (${state.calendars.length} calendars); no Bitcoin block yet` };
     }
-    const atts = otsBitcoinAttestations(proof, b.batch.root);
+    const atts = state.bitcoin;
     for (const a of atts) {
       const header = await bitcoinHeader(a.height);
       if (header.merkleroot === Buffer.from(a.msg, 'hex').reverse().toString('hex')) {

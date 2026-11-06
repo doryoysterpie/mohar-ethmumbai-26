@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mohar inspector</title>
+<style>
+  :root { --bg: #fbfaf7; --fg: #1d1d1b; --muted: #5d5b55; --line: #dedad1; --card: #ffffff; --ok: #1e7a3c; --bad: #b3261e; --pending: #8a6100; --accent: #2b4c7e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161614; --fg: #ecebe6; --muted: #a9a69d; --line: #34322d; --card: #1f1e1b; --ok: #6fcf8e; --bad: #f28b82; --pending: #e3b341; --accent: #8ab4f8; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); margin: 0 0 16px; }
+  .notice { border: 1px solid var(--pending); color: var(--fg); background: var(--card); border-radius: 8px; padding: 10px 12px; margin: 0 0 20px; }
+  .notice strong { color: var(--pending); }
+  label { display: block; font-weight: 600; margin: 16px 0 6px; }
+  textarea, input[type=text] { width: 100%; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  textarea#bundle { min-height: 220px; }
+  textarea#certificate { min-height: 90px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  button, .file { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 8px 14px; cursor: pointer; }
+  button#verify { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .file input { display: none; }
+  details { margin-top: 16px; }
+  summary { cursor: pointer; color: var(--muted); }
+  #status { color: var(--muted); min-height: 1.5em; margin: 12px 0 0; }
+  #results { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+  .check { display: grid; grid-template-columns: 11rem 7rem 1fr; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .check .name { font-weight: 600; }
+  .check .detail { color: var(--muted); overflow-wrap: anywhere; }
+  .check.pass .result { color: var(--ok); font-weight: 600; }
+  .check.fail .result { color: var(--bad); font-weight: 600; }
+  .check.pending .result, .check.not-supplied .result { color: var(--pending); font-weight: 600; }
+  .verdict { font-size: 1.2rem; font-weight: 700; margin-top: 16px; }
+  .verdict.ok { color: var(--ok); }
+  .verdict.bad { color: var(--bad); }
+  @media (max-width: 600px) { .check { grid-template-columns: 1fr; gap: 2px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mohar inspector</h1>
+  <p class="lede">Checks an export bundle on its own: the school's signature, the log entry, the Merkle path, the Ethereum Sepolia anchor and the Bitcoin timestamp. Nothing is sent to the school or the platform.</p>
+  <p class="notice"><strong>SIMULATED.</strong> The issuer, credentials and certificates behind the sample bundle are simulated test data for invented people.</p>
+
+  <label for="bundle">Bundle (JSON)</label>
+  <textarea id="bundle" spellcheck="false" aria-describedby="status"></textarea>
+  <div class="row">
+    <button id="verify" type="button">Verify</button>
+    <button id="sample" type="button">Load the sample</button>
+    <label class="file">Choose a file…<input id="file" type="file" accept="application/json,.json"></label>
+  </div>
+
+  <details>
+    <summary>Certificate binding (optional)</summary>
+    <label for="certificate">Certificate (JSON, from the presentation the school holds)</label>
+    <textarea id="certificate" spellcheck="false"></textarea>
+    <label for="salt">Certificate salt (64 hex characters)</label>
+    <input id="salt" type="text" spellcheck="false" autocomplete="off">
+  </details>
+
+  <p id="status" role="status" aria-live="polite"></p>
+  <ol id="results"></ol>
+  <p id="verdict" class="verdict"></p>
+</main>
+<script type="module">/*BUNDLE*/</script>
+</body>
+</html>
