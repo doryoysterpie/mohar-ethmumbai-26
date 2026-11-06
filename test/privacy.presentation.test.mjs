@@ -12,6 +12,9 @@ import { randomBytes } from 'node:crypto';
 import { signConsent, CONSENT_SCOPE } from '../src/holder/consent.mjs';
 import { buildPresentation, disclosedClaims } from '../src/holder/presentation.mjs';
 import { commitRecord } from '../src/log/client.mjs';
+import { operatorDocument } from '../src/log/ack.mjs';
+import { newSalt, saltedCommitment } from '../src/shared/commitment.mjs';
+import { createHash } from 'node:crypto';
 
 const manifest = JSON.parse(fs.readFileSync(new URL('../fixtures/issuance.json', import.meta.url), 'utf8'));
 const NONCE = 'nonce-0123456789abcdef';
@@ -161,7 +164,7 @@ test('a consent naming a never-presented claim cannot be signed', async () => {
   }
 });
 
-test('the log client sends only an entry type and a SHA-256 commitment', async () => {
+test('the log client sends only an entry type and the salted commitment, never the salt or the record', async () => {
   const bodies = [];
   const server = http.createServer((req, res) => {
     let b = '';
@@ -171,12 +174,21 @@ test('the log client sends only an entry type and a SHA-256 commitment', async (
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
     const { presentation } = await present(manifest.credentials[0].certificate);
-    await commitRecord({ logUrl: `http://127.0.0.1:${server.address().port}`, entryType: 'presentation', record: presentation });
+    const salt = newSalt();
+    // This server answers without an entry or acknowledgement, so the client rejects; the posted bytes are what is checked.
+    const operator = operatorDocument((await generateEd25519()).publicJwk);
+    await assert.rejects(
+      commitRecord({ logUrl: `http://127.0.0.1:${server.address().port}`, entryType: 'presentation', record: presentation, salt, operator }),
+      /entry for another commitment/,
+    );
     assert.equal(bodies.length, 1);
     const body = JSON.parse(bodies[0]);
     assert.deepEqual(Object.keys(body).sort(), ['commitment', 'entry_type']);
     assert.equal(body.entry_type, 'presentation');
     assert.match(body.commitment, /^[0-9a-f]{64}$/);
+    assert.equal(body.commitment, saltedCommitment(presentation, salt));
+    assert.notEqual(body.commitment, createHash('sha256').update(presentation).digest('hex'));
+    assert.ok(!bodies[0].includes(salt), 'the salt reached the log');
   } finally {
     server.close();
   }

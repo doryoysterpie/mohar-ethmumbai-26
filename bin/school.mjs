@@ -3,7 +3,9 @@
 //   keygen      new key in .keys/school.json; prints the school's did:key
 //   did         prints the school's did:key
 //   serve       runs the verifier service on PORT (default 8080), store at MOHAR_SCHOOL_DB (default school.sqlite);
-//               posts receipt and re-check commitments to MOHAR_LOG_URL when set; /status and /recheck need MOHAR_ADMIN_TOKEN
+//               posts receipt and re-check commitments to MOHAR_LOG_URL when set, keeping each acknowledgement that is valid
+//               under the published log operator key (MOHAR_LOG_OPERATOR, default site/operator.json); /status and /recheck
+//               need MOHAR_ADMIN_TOKEN
 //   recheck     runs the term status check against the local store and prints the re-check receipts
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +26,11 @@ function readKey() {
 
 function school() {
   const key = readKey();
-  return createSchool({ store: openStore(DB_FILE), schoolPrivateJwk: key.privateJwk, logUrl: process.env.MOHAR_LOG_URL });
+  const logUrl = process.env.MOHAR_LOG_URL;
+  const operator = logUrl
+    ? JSON.parse(fs.readFileSync(process.env.MOHAR_LOG_OPERATOR ?? path.join(ROOT, 'site', 'operator.json'), 'utf8'))
+    : undefined;
+  return createSchool({ store: openStore(DB_FILE), schoolPrivateJwk: key.privateJwk, logUrl, operator });
 }
 
 const [cmd] = process.argv.slice(2);

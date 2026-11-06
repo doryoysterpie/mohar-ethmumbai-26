@@ -1,9 +1,9 @@
 // A simulated issuer, teacher and school wired together in memory, for tests.
 import fs from 'node:fs';
-import http from 'node:http';
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { generateEd25519, didKeyFromJwk, signerFor } from '../../src/shared/keys.mjs';
 import { sha256Hex } from '../../src/shared/encoding.mjs';
+import { newSalt } from '../../src/shared/commitment.mjs';
 import { didDocument } from '../../src/issuer/did-web.mjs';
 import { issueCredential, hasher } from '../../src/issuer/credential.mjs';
 import { buildStatusList } from '../../src/issuer/status-list.mjs';
@@ -12,22 +12,31 @@ import { signConsent, CONSENT_SCOPE } from '../../src/holder/consent.mjs';
 import { buildPresentation } from '../../src/holder/presentation.mjs';
 import { openStore } from '../../src/verifier/store.mjs';
 import { createSchool } from '../../src/verifier/school.mjs';
+import { openLogStore } from '../../src/log/store.mjs';
+import { createLog } from '../../src/log/service.mjs';
+import { createLogServer } from '../../src/log/server.mjs';
+import { operatorDocument } from '../../src/log/ack.mjs';
 
 export const cert = JSON.parse(fs.readFileSync(new URL('../../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
 
-/** Local HTTP server that records every JSON body posted to it. */
+/**
+ * Local log service (in memory, with its own operator key) that records every body committed to it.
+ * Returns its URL, the bodies, the published operator document for its key, and close().
+ */
 export async function logServer() {
   const bodies = [];
-  const server = http.createServer((req, res) => {
-    let b = '';
-    req.on('data', (c) => { b += c; });
-    req.on('end', () => { bodies.push(JSON.parse(b)); res.setHeader('content-type', 'application/json'); res.end('{}'); });
-  });
+  const op = await generateEd25519();
+  const log = createLog({ store: openLogStore(':memory:'), ots: false, operatorKey: op.privateJwk });
+  const server = createLogServer({ ...log, commit: (b) => { bodies.push(b); return log.commit(b); } });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  return { url: `http://127.0.0.1:${server.address().port}`, bodies, close: () => server.close() };
+  return { url: `http://127.0.0.1:${server.address().port}`, bodies, operator: operatorDocument(op.publicJwk), close: () => server.close() };
 }
 
-export async function world({ logUrl } = {}) {
+/**
+ * @param {{ logUrl?: string, operator?: { id: string }, logFetch?: typeof fetch }} [p] operator: the log's published
+ *   operator document; logFetch: replaces fetch for the school's log calls
+ */
+export async function world({ logUrl, operator, logFetch } = {}) {
   const issuer = await generateEd25519();
   const holder = await generateEd25519();
   const schoolKey = await generateEd25519();
@@ -45,9 +54,11 @@ export async function world({ logUrl } = {}) {
     return buildStatusList({ uri: STATUS_LIST_URI, statuses: w.statuses, issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
   };
   w.store = openStore(':memory:');
-  w.school = createSchool({
-    store: w.store, schoolPrivateJwk: schoolKey.privateJwk, didFetch, fetchText: w.fetchText, logUrl, clock: () => w.now,
+  w.rawSchool = createSchool({
+    store: w.store, schoolPrivateJwk: schoolKey.privateJwk, didFetch, fetchText: w.fetchText, logUrl, operator, logFetch, clock: () => w.now,
   });
+  // Tests that are not about the presentation salt get a fresh one; w.rawSchool is the school as is.
+  w.school = { ...w.rawSchool, present: (body) => w.rawSchool.present({ ...body, presentation_salt: body?.presentation_salt ?? newSalt() }) };
   w.consent = await signConsent({ holderDid: w.holderDid, holderPrivateJwk: holder.privateJwk, schoolDid: w.school.did, now: w.now });
   w.credential = (statusIndex = 0, issuerPrivateJwk = issuer.privateJwk) => issueCredential({
     certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex, issuerPrivateJwk, kid,

@@ -13,8 +13,11 @@ CREATE TABLE IF NOT EXISTS receipts (
   receipt_id TEXT PRIMARY KEY,
   holder_did TEXT NOT NULL,
   presentation TEXT NOT NULL,
+  presentation_salt TEXT NOT NULL,
   consent TEXT NOT NULL,
   receipt TEXT NOT NULL,
+  receipt_salt TEXT NOT NULL,
+  receipt_ack TEXT,
   status_ref TEXT NOT NULL,
   issuer TEXT NOT NULL,
   status_result TEXT NOT NULL,
@@ -27,6 +30,8 @@ CREATE TABLE IF NOT EXISTS rechecks (
   recheck_id TEXT PRIMARY KEY,
   receipt_id TEXT NOT NULL REFERENCES receipts (receipt_id),
   recheck TEXT NOT NULL,
+  recheck_salt TEXT NOT NULL,
+  recheck_ack TEXT,
   status_result TEXT NOT NULL,
   checked_at TEXT NOT NULL,
   next_recheck_due TEXT NOT NULL,
@@ -50,6 +55,9 @@ export function openStore(file) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  for (const [table, col] of [['receipts', 'receipt_ack'], ['rechecks', 'recheck_ack']]) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+  }
 
   const consume = db.prepare('UPDATE nonces SET used_at = ? WHERE nonce = ? AND used_at IS NULL AND expires_at >= ?');
   const lookup = db.prepare('SELECT used_at, expires_at FROM nonces WHERE nonce = ?');
@@ -78,15 +86,20 @@ export function openStore(file) {
     },
 
     saveReceipt(r) {
-      db.prepare(`INSERT INTO receipts (receipt_id, holder_did, presentation, consent, receipt, status_ref, issuer, status_result,
-        verified_at, recheck_due, valid_until) VALUES (@receipt_id, @holder_did, @presentation, @consent, @receipt, @status_ref,
-        @issuer, @status_result, @verified_at, @recheck_due, @valid_until)`).run(r);
+      db.prepare(`INSERT INTO receipts (receipt_id, holder_did, presentation, presentation_salt, consent, receipt, receipt_salt, status_ref,
+        issuer, status_result, verified_at, recheck_due, valid_until) VALUES (@receipt_id, @holder_did, @presentation,
+        @presentation_salt, @consent, @receipt, @receipt_salt, @status_ref, @issuer, @status_result, @verified_at, @recheck_due,
+        @valid_until)`).run(r);
     },
 
     saveRecheck(r) {
-      db.prepare(`INSERT INTO rechecks (recheck_id, receipt_id, recheck, status_result, checked_at, next_recheck_due, alert)
-        VALUES (@recheck_id, @receipt_id, @recheck, @status_result, @checked_at, @next_recheck_due, @alert)`).run(r);
+      db.prepare(`INSERT INTO rechecks (recheck_id, receipt_id, recheck, recheck_salt, status_result, checked_at, next_recheck_due, alert)
+        VALUES (@recheck_id, @receipt_id, @recheck, @recheck_salt, @status_result, @checked_at, @next_recheck_due, @alert)`).run(r);
     },
+
+    /** Stores the log operator's signed acknowledgement of a receipt or re-check commitment. */
+    setReceiptAck: (id, ack) => db.prepare('UPDATE receipts SET receipt_ack = ? WHERE receipt_id = ?').run(ack, id),
+    setRecheckAck: (id, ack) => db.prepare('UPDATE rechecks SET recheck_ack = ? WHERE recheck_id = ?').run(ack, id),
 
     saveRefusal(presentationHash, reason, refusedAt) {
       db.prepare('INSERT INTO refusals (presentation_hash, reason, refused_at) VALUES (?, ?, ?)').run(presentationHash, reason, refusedAt);

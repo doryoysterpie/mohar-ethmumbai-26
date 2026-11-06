@@ -3,8 +3,13 @@
 //   keygen <name>                                                 new key in .keys/holder-<name>.json; prints the did:key
 //   consent <name> <school-did>                                   prints a signed consent record
 //   present <name> <credential-file> <consent-file> <school-did> <nonce>
-//                                                                 prints a presentation; posts the consent and presentation
-//                                                                 commitments to the log service at MOHAR_LOG_URL when set;
+//                                                                 prints { presentation, presentation_salt }; keeps the consent
+//                                                                 salt in <consent-file>.salt (and its log acknowledgement in
+//                                                                 <consent-file>.ack); posts both salted
+//                                                                 commitments to the log service at MOHAR_LOG_URL when set,
+//                                                                 and stops unless each comes back with an acknowledgement
+//                                                                 valid under the published operator key (MOHAR_LOG_OPERATOR,
+//                                                                 default site/operator.json);
 //                                                                 verifies the credential first (MOHAR_SITE_DIR: local did.json)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,7 +18,7 @@ import { generateEd25519, didKeyFromJwk } from '../src/shared/keys.mjs';
 import { signConsent } from '../src/holder/consent.mjs';
 import { buildPresentation } from '../src/holder/presentation.mjs';
 import { commitRecord } from '../src/log/client.mjs';
-import { sha256Hex } from '../src/shared/encoding.mjs';
+import { newSalt, isSalt, saltedCommitment } from '../src/shared/commitment.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const keyFile = (name) => {
@@ -55,18 +60,30 @@ if (cmd === 'keygen') {
   const presentation = await buildPresentation({
     credential: readText(credFile), consent, holderPrivateJwk: key.privateJwk, nonce, aud: schoolDid, didFetch,
   });
-  process.stdout.write(`${presentation}\n`);
+  // The teacher keeps both salts; the presentation salt also goes to the school with the presentation.
+  const consentSaltFile = `${consentFile}.salt`;
+  const consentSalt = fs.existsSync(consentSaltFile) ? readText(consentSaltFile) : newSalt();
+  if (!isSalt(consentSalt)) throw new Error(`${consentSaltFile} does not hold a 32-byte hex salt`);
+  fs.writeFileSync(consentSaltFile, `${consentSalt}\n`, { mode: 0o600 });
+  const presentationSalt = newSalt();
   const logUrl = process.env.MOHAR_LOG_URL;
+  const records = [['consent', consent, consentSalt], ['presentation', presentation, presentationSalt]];
+  const acks = {};
   if (logUrl) {
-    for (const [entryType, record] of [['consent', consent], ['presentation', presentation]]) {
-      const { commitment } = await commitRecord({ logUrl, entryType, record });
-      console.error(`committed ${entryType} ${commitment}`);
+    // The log operator's signed acknowledgements are checked and kept by the teacher, with the salts.
+    const operatorFile = process.env.MOHAR_LOG_OPERATOR ?? path.join(ROOT, 'site', 'operator.json');
+    const operator = JSON.parse(fs.readFileSync(operatorFile, 'utf8'));
+    for (const [entryType, record, salt] of records) {
+      const { commitment, ack } = await commitRecord({ logUrl, entryType, record, salt, operator });
+      acks[entryType] = ack;
+      console.error(`committed ${entryType} ${commitment} (acknowledged)`);
     }
+    fs.writeFileSync(`${consentFile}.ack`, `${acks.consent}\n`, { mode: 0o600 });
   } else {
     console.error('MOHAR_LOG_URL not set; commitments not posted:');
-    console.error(`  consent ${sha256Hex(consent)}`);
-    console.error(`  presentation ${sha256Hex(presentation)}`);
+    for (const [entryType, record, salt] of records) console.error(`  ${entryType} ${saltedCommitment(record, salt)}`);
   }
+  process.stdout.write(`${JSON.stringify({ presentation, presentation_salt: presentationSalt, ...(acks.presentation ? { presentation_ack: acks.presentation } : {}) })}\n`);
 } else {
   console.error('usage: holder keygen <name> | consent <name> <school-did> | present <name> <credential-file> <consent-file> <school-did> <nonce>');
   process.exit(2);

@@ -29,15 +29,15 @@ A status check returns `not_revoked`, `revoked` or `unknown`. `unknown` covers a
 
 The teacher holds a did:key, signs a consent record naming the school, the purpose, the claims to disclose and an end date (the end of the academic year, 31 March by default; set `MOHAR_ACADEMIC_YEAR_END=MM-DD` to change it), and builds a presentation that discloses only those claims. Before presenting, the teacher verifies the credential against the issuer's did:web document and refuses it unless its always-visible part is exactly `iss`, `sub` (this teacher), `vct`, `iat`, `status.status_list` with only `idx` and the issuer's list `uri`, `cnf.jwk` with only `kty`, `crv` and this teacher's `x`, `_sd` and `_sd_alg`, and unless every disclosed value has its allowed type (no nested structure). Consent times must be ISO 8601 UTC with milliseconds. The presentation carries a key-binding JWT with the school as `aud`, the school's `nonce`, `iat`, and the SHA-256 of the consent record. Roll number, date of birth, category, family names and marks are never disclosed.
 
-The presentation and the consent go to the school directly. The log service receives only their SHA-256 commitments.
+The presentation and the consent go to the school directly. The log service receives only their salted commitments (see Log). The teacher keeps both salts and sends the presentation salt to the school with the presentation.
 
 ```
 node bin/holder.mjs keygen teacher-a                         # prints the teacher's did:key
 node bin/holder.mjs consent teacher-a <school did:key> > consent.jws
-MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent.jws <school did:key> <nonce> > presentation.txt
+MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent.jws <school did:key> <nonce> > presentation.json
 ```
 
-`present` posts both commitments to the log service when `MOHAR_LOG_URL` is set, and prints them otherwise. `MOHAR_SITE_DIR` reads the issuer's `did.json` from a local copy of the site instead of fetching it.
+`present` prints `{ presentation, presentation_salt }`, keeps the consent salt in `consent.jws.salt`, and posts both salted commitments to the log service when `MOHAR_LOG_URL` is set (it prints them otherwise). `MOHAR_SITE_DIR` reads the issuer's `did.json` from a local copy of the site instead of fetching it.
 
 The consent record follows the shape of a consent record under India's Digital Personal Data Protection Rules, 2025. Mohar is not a registered Consent Manager and does not claim to be. Withdrawal is recorded as available; a withdrawal endpoint is not in this version.
 
@@ -56,12 +56,56 @@ node bin/school.mjs recheck                                  # term check agains
 | Method | Path | Result |
 |---|---|---|
 | GET | `/nonce` | `{ nonce, expires_at }`, valid for ten minutes, usable once |
-| POST | `/present` | `{ presentation, consent }` → 200 with the receipt, or 422 with the refusal |
+| POST | `/present` | `{ presentation, consent, presentation_salt }` → 200 with the receipt, 422 with the refusal, 400 without a valid salt |
 | GET | `/status/{holder_did}` | latest receipt, status result, last check time, next check date, alert; staff token |
 | POST | `/recheck` | term check; staff token |
 | GET | `/export/{receipt_id}` | not in this version |
 
 Staff routes take `authorization: Bearer <MOHAR_ADMIN_TOKEN>` and are off when the token is not set. Receipt and re-check commitments go to the log service when `MOHAR_LOG_URL` is set.
+
+## Log
+
+The log service accepts only `{ entry_type, commitment }`, where `entry_type` is `consent`, `presentation`, `receipt` or `recheck` and `commitment` is `SHA-256("mohar/commit/v1" || salt || record)`: the ASCII domain string, a 32-byte random salt and the UTF-8 bytes of the record. Whoever creates a record makes its salt and keeps it; the salt never goes to the log, so no log field can be recomputed from a record, or from anything in it, without that salt. The school keeps the receipt and re-check salts and the presentation salt it receives. Each entry is chained: `entry_hash = SHA-256(prev_hash || entry_type || commitment || ts)`, with `prev_hash` of the first entry set to 64 zeros. Committing the same type and commitment again returns the existing entry. The store keeps a head checkpoint (the sequence number and hash of the last entry appended), authenticated with an HMAC under `MOHAR_LOG_HEAD_KEY` when that key is set, and refuses to append when the checkpoint is missing or not authenticated, when the stored tail does not match it, or when a closed batch ends after it. An operator adopts a checkpoint for a log that has none with `adopt-head`. Before closing or anchoring a batch, the service re-checks the whole chain, the checkpoint and every closed batch root, and refuses if any of them is wrong.
+
+A batch closes over every waiting entry. Its root is a Merkle tree over the entries: leaves are `SHA-256(0x00 || entry_hash)`, inner nodes `SHA-256(0x01 || left || right)`, and the tree is padded to a power of two with `SHA-256(0x02)`, which no entry can produce. The batch root commits to the batch header and that tree root: `SHA-256(0x03 || "mohar/batch/v1" || batch_id || first_seq || size || closed_at || tree_root)`, with the numbers as 8-byte big-endian and `closed_at` as its 24 ASCII characters. The batch root is anchored twice:
+
+- Ethereum Sepolia: a zero-value transaction from the operator address to itself whose calldata is the 32-byte root. The transaction is signed once and sent to each configured RPC in turn.
+- Bitcoin, through OpenTimestamps: the root is stamped on the public calendars. The proof reads `pending` until a calendar returns a Bitcoin block header attestation, then `complete` with that block height. Checking the attestation against Bitcoin is the verifier's job.
+
+The two anchors are reported separately. If one fails, the batch stays closed, the failure is recorded on it, and `anchor` retries.
+
+```
+node --env-file=.env bin/log.mjs serve     # PORT (default 8081), batch every MOHAR_BATCH_SECONDS (default 3600)
+node --env-file=.env bin/log.mjs batch     # close and anchor a batch now
+node --env-file=.env bin/log.mjs anchor    # anchor batches still missing an anchor
+node --env-file=.env bin/log.mjs upgrade   # ask the calendars for Bitcoin attestations
+node bin/log.mjs check                     # re-check chain, head checkpoint and batch roots
+node --env-file=.env bin/log.mjs check --anchors   # also compare each stored root with its Sepolia calldata
+```
+
+`.env` (not tracked) holds `MOHAR_SEPOLIA_KEY` (operator key, `0x…`), `MOHAR_SEPOLIA_RPCS` (comma-separated), and `MOHAR_ADMIN_TOKEN`. Set `MOHAR_OTS=off` to skip OpenTimestamps.
+
+| Method | Path | Result |
+|---|---|---|
+| POST | `/commit` | 201 new entry, 200 existing entry, 400 for anything that is not exactly `{ entry_type, commitment }` |
+| GET | `/proof/{commitment}` | the entry, its Merkle path and its batch with both anchors; no batch while the batch is open; `?entry_type=` chooses when the same commitment is logged under several types (409 otherwise) |
+| GET | `/batches/{id}` | batch summary |
+| POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
+
+### Acknowledgements
+
+Every accepted `/commit` returns an `ack`: a JWS (`log-ack+jwt`) signed by the log operator's Ed25519 key over `{ seq, entry_hash, entry_type, commitment, ts, operator_key_id }`. The log refuses commits when it has no operator key, and `serve` does not start unless the operator key in `.keys/log-operator.json` is the one published in `site/operator.json`. The log stores nothing extra; the teacher and the school keep their acknowledgements with their salts. Both check each acknowledgement against the published operator key (`MOHAR_LOG_OPERATOR`, default `site/operator.json`) and against the entry the log returned: the teacher stops when one is missing or does not verify, and the school records the commit as not posted. The operator key is separate from the Sepolia key and is published in `site/operator.json`: `did:key:z6MkgvDZZZ8ExoJ489rWxMJsWh4fe6hhFzZ6Nd61PVcyZyy2`. Two acknowledgements with the same `seq` and different entry hashes are a signed proof that the operator replaced an entry:
+
+```
+node bin/log.mjs operator-keygen                       # operator key in .keys/ (not tracked); writes site/operator.json
+node bin/log.mjs equivocation a.ack b.ack [--operator site/operator.json]   # exit 3 on equivocation
+```
+
+Reuse of a sequence number is detectable by any acknowledgement holder.
+
+## Limitations
+
+Before a batch is anchored, the log operator can roll back unbatched entries; the log cannot prevent this, and clients hold signed acknowledgements that make it provable. Rotation of the operator key is not in this version.
 
 ## Licence
 

@@ -8,6 +8,7 @@ import { ISSUER_DID, VCT, STATUS_LIST_URI } from '../src/issuer/profile.mjs';
 import { CONSENT_SCOPE, didKeyKid } from '../src/holder/consent.mjs';
 import { decodeJws, verifyJws, signJws } from '../src/shared/jws.mjs';
 import { sha256Hex } from '../src/shared/encoding.mjs';
+import { saltedCommitment } from '../src/shared/commitment.mjs';
 import { signConsent } from '../src/holder/consent.mjs';
 import { RECEIPT_TYP, RECHECK_TYP } from '../src/verifier/school.mjs';
 import { world, logServer, cert } from './helpers/world.mjs';
@@ -81,7 +82,7 @@ test('status on the receipt is not_revoked or unknown; revoked is refused', asyn
 test('a revoked index flips to revoked with alert true at the term check, and the re-check is logged', async () => {
   const log = await logServer();
   try {
-    const w = await world({ logUrl: log.url });
+    const w = await world({ logUrl: log.url, operator: log.operator });
     const r = await w.school.present({ presentation: await w.present({ statusIndex: 0 }), consent: w.consent });
     w.now = new Date('2027-01-01T00:00:00Z');
     w.statuses = [1, 1, 0];
@@ -92,7 +93,9 @@ test('a revoked index flips to revoked with alert true at the term check, and th
     assert.equal(payload.alert, true);
     assert.equal(payload.next_recheck_due, '2027-10-01T00:00:00.000Z');
     const logged = log.bodies.find((b) => b.entry_type === 'recheck');
-    assert.equal(logged.commitment, sha256Hex(rc.recheck));
+    const { recheck_salt: salt } = w.store.db.prepare('SELECT recheck_salt FROM rechecks WHERE recheck_id = ?').get(rc.recheck_id);
+    assert.equal(logged.commitment, saltedCommitment(rc.recheck, salt));
+    assert.notEqual(logged.commitment, sha256Hex(rc.recheck));
     const s = w.school.status(w.holderDid);
     assert.deepEqual([s.status_result, s.alert], ['revoked', true]);
   } finally {
