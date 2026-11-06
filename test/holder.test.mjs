@@ -14,6 +14,7 @@ import { buildPresentation } from '../src/holder/presentation.mjs';
 const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
 const NONCE = 'nonce-0123456789abcdef';
 const NOW = new Date('2026-11-06T10:00:00Z');
+const ISSUED_AT = Math.floor(NOW.getTime() / 1000); // credentials are signed at the test clock, not at the wall clock
 
 async function setup() {
   const issuer = await generateEd25519();
@@ -22,7 +23,7 @@ async function setup() {
   const { kid, document } = didDocument(ISSUER_DID, issuer.publicJwk);
   const didFetch = async () => ({ status: 200, json: async () => document });
   const credential = await issueCredential({
-    certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid,
+    certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid, iat: ISSUED_AT,
   });
   const holderDid = didKeyFromJwk(holder.publicJwk);
   const aud = didKeyFromJwk(school.publicJwk);
@@ -94,7 +95,7 @@ test('a credential issued to another holder is refused', async () => {
   const other = await generateEd25519();
   const { kid } = didDocument(ISSUER_DID, issuer.publicJwk);
   const credential = await issueCredential({
-    certificate: cert, holderPublicJwk: other.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid,
+    certificate: cert, holderPublicJwk: other.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid, iat: ISSUED_AT,
   });
   await assert.rejects(present({ credential }), /subject is not this holder/);
 });
@@ -114,7 +115,7 @@ test('a credential naming this holder but bound to another key is refused', asyn
 test('a credential of another type is refused', async () => {
   const s = await setup();
   const other = await issueCredential({
-    certificate: cert, holderPublicJwk: s.holder.publicJwk, statusIndex: 0, issuerPrivateJwk: s.issuer.privateJwk, kid: s.kid, vct: 'https://example.test/other/v1',
+    certificate: cert, holderPublicJwk: s.holder.publicJwk, statusIndex: 0, issuerPrivateJwk: s.issuer.privateJwk, kid: s.kid, vct: 'https://example.test/other/v1', iat: ISSUED_AT,
   });
   await assert.rejects(s.present({ credential: other }), /not an eligibility credential/);
 });
