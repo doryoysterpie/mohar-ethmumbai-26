@@ -1,5 +1,6 @@
 import { assertCommitment, ENTRY_TYPES } from './chain.mjs';
 import { logProblems } from './integrity.mjs';
+import { signAck } from './ack.mjs';
 import { merkleRoot, merklePath } from './merkle.mjs';
 import { otsStamp, otsUpgrade, otsState } from '../anchor/ots.mjs';
 import { anchorRoot } from '../anchor/sepolia.mjs';
@@ -10,6 +11,7 @@ import { anchorRoot } from '../anchor/sepolia.mjs';
  *   store: ReturnType<typeof import('./store.mjs').openLogStore>,
  *   clock?: () => Date,
  *   sepolia?: { privateKey: `0x${string}`, rpcUrls: string[] } | null,
+ *   operatorKey?: import('../shared/keys.mjs').Ed25519Jwk,
  *   ots?: boolean,
  *   stamp?: typeof otsStamp, upgrade?: typeof otsUpgrade, anchor?: typeof anchorRoot,
  * }} config
@@ -53,6 +55,12 @@ export function createLog(config) {
     commit({ entry_type: entryType, commitment }) {
       assertCommitment(entryType, commitment);
       return store.append(entryType, commitment, clock().toISOString());
+    },
+
+    /** Signed acknowledgement of a log entry under the operator key, or null when no operator key is configured. */
+    async acknowledge(entry) {
+      if (!config.operatorKey) return null;
+      return signAck(entry, config.operatorKey);
     },
 
     /**

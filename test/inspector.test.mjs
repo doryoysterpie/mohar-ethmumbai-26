@@ -13,21 +13,26 @@ import { scenario } from './helpers/scenario.mjs';
 
 let s;
 let base;
-const opts = () => ({ rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader });
+let recheckBundle;
+const opts = () => ({ rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader, operator: s.operator });
 const clone = () => structuredClone(base);
 const results = async (bundle) => Object.fromEntries((await verifyBundle(bundle, opts())).checks.map((c) => [c.check, c]));
 
 test.before(async () => {
   s = await scenario({ bitcoinHeight: 905321 });
   base = await (await s.fetchBundle(s.receipt.receipt_id)).json();
+  recheckBundle = await (await s.fetchBundle(s.recheck.recheck_id)).json();
   await s.destroyServices();
 });
 test.after(async () => { await s.close(); });
 
-test('an untouched bundle passes all five checks and reports certificate binding as not supplied', async () => {
+test('an untouched bundle passes all six checks and reports certificate binding as not supplied', async () => {
   const r = await verifyBundle(clone(), opts());
   assert.equal(r.ok, true);
-  assert.deepEqual(r.checks.map((c) => c.result), ['pass', 'pass', 'pass', 'pass', 'pass', 'not supplied']);
+  assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [
+    ['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass'], ['acknowledgement', 'pass'],
+    ['certificate binding', 'not supplied'],
+  ]);
 });
 
 test('a forged receipt fails the signature check by name, and only that check', async () => {
@@ -169,17 +174,17 @@ test('a bundle that is not a Mohar bundle fails every check', async () => {
 test('the certificate-binding line passes with the correct salt and fails with the named reason on a wrong salt', async () => {
   const { cert } = await import('./helpers/world.mjs');
   const right = await verifyBundle(clone(), { ...opts(), certificate: cert, certificateSalt: s.certificateSalt });
-  assert.equal(right.checks[5].check, 'certificate binding');
-  assert.equal(right.checks[5].result, 'pass');
+  assert.equal(right.checks[6].check, 'certificate binding');
+  assert.equal(right.checks[6].result, 'pass');
   assert.equal(right.ok, true);
   const wrong = await verifyBundle(clone(), { ...opts(), certificate: cert, certificateSalt: newSalt() });
-  assert.equal(wrong.checks[5].result, 'fail');
-  assert.match(wrong.checks[5].detail, /certificate and salt do not recompute the receipt certificate_commitment/);
+  assert.equal(wrong.checks[6].result, 'fail');
+  assert.match(wrong.checks[6].detail, /certificate and salt do not recompute the receipt certificate_commitment/);
   assert.equal(wrong.ok, false);
   const otherCert = await verifyBundle(clone(), { ...opts(), certificate: { ...cert, roll_no: 'SIM-2024-999999' }, certificateSalt: s.certificateSalt });
-  assert.equal(otherCert.checks[5].result, 'fail');
+  assert.equal(otherCert.checks[6].result, 'fail');
   const half = await verifyBundle(clone(), { ...opts(), certificate: cert });
-  assert.match(half.checks[5].detail, /must be supplied together/);
+  assert.match(half.checks[6].detail, /must be supplied together/);
 });
 
 test('each exported provenance field is bound: a change to any one fails with a named reason', async () => {
@@ -219,4 +224,45 @@ test('the Sepolia check uses one RPC for chain id and transaction: a non-Sepolia
     empty.close();
     mainnet.close();
   }
+});
+
+test('a bundle without an acknowledgement reports it as not supplied, never pass', async () => {
+  for (const drop of [(b) => { delete b.ack; }, (b) => { b.ack = null; }]) {
+    const b = clone();
+    drop(b);
+    const r = await verifyBundle(b, opts());
+    assert.equal(r.checks[5].check, 'acknowledgement');
+    assert.equal(r.checks[5].result, 'not supplied');
+    assert.equal(r.ok, true);
+  }
+});
+
+test('an acknowledgement for another entry fails the acknowledgement check by name, and only that check', async () => {
+  const b = clone();
+  b.ack = recheckBundle.ack;
+  const r = await results(b);
+  assert.equal(r.acknowledgement.result, 'fail');
+  assert.match(r.acknowledgement.detail, /acknowledgement seq \d+ is not the bundle entry's \d+/);
+  for (const c of ['signature', 'entry', 'merkle', 'sepolia', 'ots']) assert.equal(r[c].result, 'pass', c);
+  assert.equal((await verifyBundle(b, opts())).ok, false);
+});
+
+test('a forged acknowledgement under the operator key id fails the acknowledgement check', async () => {
+  const b = clone();
+  const { header, payload } = decodeJws(b.ack);
+  const forger = await generateEd25519();
+  b.ack = await signJws(payload, { typ: header.typ, kid: header.kid }, forger.privateJwk);
+  const r = await verifyBundle(b, opts());
+  assert.equal(r.checks[5].result, 'fail');
+  assert.match(r.checks[5].detail, /acknowledgement invalid: .*signature invalid/);
+  assert.equal(r.ok, false);
+});
+
+test('an acknowledgement checked without the published operator key fails, never passes', async () => {
+  const r = await verifyBundle(clone(), { ...opts(), operator: undefined });
+  assert.equal(r.checks[5].result, 'fail');
+  assert.match(r.checks[5].detail, /no published operator key/);
+  const other = await verifyBundle(clone(), { ...opts(), operator: { id: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK' } });
+  assert.match(other.checks[5].detail, /another operator key/);
+  assert.equal(other.ok, false);
 });

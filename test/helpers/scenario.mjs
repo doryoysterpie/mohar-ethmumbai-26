@@ -16,6 +16,8 @@ import { otsBitcoinAttestations } from '../../src/anchor/ots.mjs';
 import { world } from './world.mjs';
 import { fakeRpc } from './fake-rpc.mjs';
 import { otsProof } from './ots-proof.mjs';
+import { generateEd25519 } from '../../src/shared/keys.mjs';
+import { operatorDocument } from '../../src/log/ack.mjs';
 
 const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', () => r(`http://127.0.0.1:${server.address().port}`)));
 
@@ -26,9 +28,12 @@ export async function scenario(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mohar-export-'));
   const rpc = await fakeRpc();
   const logStore = openLogStore(path.join(dir, 'log.sqlite'));
+  const operatorKey = await generateEd25519();
+  const operator = operatorDocument(operatorKey.publicJwk);
   const log = createLog({
     store: logStore, ots: true, stamp: async (root) => otsProof(root, { bitcoinHeight: options.bitcoinHeight }),
     sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 },
+    operatorKey: operatorKey.privateJwk,
   });
   const logServer = createLogServer(log);
   const logUrl = await listen(logServer);
@@ -85,7 +90,7 @@ export async function scenario(options = {}) {
   };
 
   return {
-    w, school, schoolStore, logStore, certificateSalt, log, rpc, dir, consentSalt, presentationSalt, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers,
+    w, school, schoolStore, logStore, certificateSalt, log, rpc, dir, consentSalt, presentationSalt, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers, operator,
     fetchBundle, destroyServices, close: async () => { await destroyServices(); rpc.close(); },
   };
 }
