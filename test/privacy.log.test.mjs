@@ -11,7 +11,9 @@ import { commitRecord } from '../src/log/client.mjs';
 import { newSalt, saltedCommitment } from '../src/shared/commitment.mjs';
 import { fakeRpc } from './helpers/fake-rpc.mjs';
 import { otsProof } from './helpers/ots-proof.mjs';
-import { world } from './helpers/world.mjs';
+import { world, logServer } from './helpers/world.mjs';
+import { generateEd25519 } from '../src/shared/keys.mjs';
+import { operatorDocument } from '../src/log/ack.mjs';
 
 const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
 const leaves = (v) => (v === null || typeof v !== 'object' ? [String(v)] : Object.values(v).flatMap(leaves));
@@ -29,20 +31,23 @@ function dump(db) {
 test('no field of a log entry, root or anchor transaction is personal data, or recomputable from personal data without a salt held outside the log', async () => {
   const rpc = await fakeRpc();
   const store = openLogStore(':memory:');
+  const op = await generateEd25519();
+  const operator = operatorDocument(op.publicJwk);
   const log = createLog({
     store, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 }, stamp: async (root) => otsProof(root),
+    operatorKey: op.privateJwk,
   });
   const server = createLogServer(log);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const logUrl = `http://127.0.0.1:${server.address().port}`;
   try {
     // The real record flow: the teacher commits consent and presentation, the school commits receipt and re-check.
-    const w = await world({ logUrl });
+    const w = await world({ logUrl, operator });
     const consentSalt = newSalt();
     const presentationSalt = newSalt();
     const presentation = await w.present();
-    await commitRecord({ logUrl, entryType: 'consent', record: w.consent, salt: consentSalt });
-    await commitRecord({ logUrl, entryType: 'presentation', record: presentation, salt: presentationSalt });
+    await commitRecord({ logUrl, entryType: 'consent', record: w.consent, salt: consentSalt, operator });
+    await commitRecord({ logUrl, entryType: 'presentation', record: presentation, salt: presentationSalt, operator });
     const r = await w.school.present({ presentation, consent: w.consent, presentation_salt: presentationSalt });
     assert.equal(r.ok, true);
     w.now = new Date('2027-01-01T00:00:00.000Z');
@@ -87,27 +92,25 @@ test('no field of a log entry, root or anchor transaction is personal data, or r
 });
 
 test('committing the same record twice yields two different commitments, neither equal to SHA-256 of the record', async () => {
-  const bodies = [];
-  const server = createLogServer({ commit: (b) => { bodies.push(b); return { created: true, entry: {} }; }, acknowledge: async () => null });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const logUrl = `http://127.0.0.1:${server.address().port}`;
+  const log = await logServer();
+  const { url: logUrl, bodies, operator } = log;
   try {
     const record = canonicalJson(cert);
-    const first = await commitRecord({ logUrl, entryType: 'consent', record, salt: newSalt() });
-    const second = await commitRecord({ logUrl, entryType: 'consent', record, salt: newSalt() });
+    const first = await commitRecord({ logUrl, entryType: 'consent', record, salt: newSalt(), operator });
+    const second = await commitRecord({ logUrl, entryType: 'consent', record, salt: newSalt(), operator });
     assert.notEqual(first.commitment, second.commitment);
     for (const c of [first.commitment, second.commitment]) assert.notEqual(c, sha256Hex(record));
     assert.deepEqual(bodies.map((b) => b.commitment), [first.commitment, second.commitment]);
-    await assert.rejects(commitRecord({ logUrl, entryType: 'consent', record }), /salt must be 32 bytes/);
+    await assert.rejects(commitRecord({ logUrl, entryType: 'consent', record, operator }), /salt must be 32 bytes/);
     assert.equal(bodies.length, 2);
   } finally {
-    server.close();
+    log.close();
   }
 });
 
 test('the log refuses anything but an entry type and a SHA-256 commitment', async () => {
   const store = openLogStore(':memory:');
-  const log = createLog({ store, ots: false });
+  const log = createLog({ store, ots: false, operatorKey: (await generateEd25519()).privateJwk });
   const server = createLogServer(log);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}/commit`;

@@ -6,7 +6,10 @@
 //                                                                 prints { presentation, presentation_salt }; keeps the consent
 //                                                                 salt in <consent-file>.salt (and its log acknowledgement in
 //                                                                 <consent-file>.ack); posts both salted
-//                                                                 commitments to the log service at MOHAR_LOG_URL when set;
+//                                                                 commitments to the log service at MOHAR_LOG_URL when set,
+//                                                                 and stops unless each comes back with an acknowledgement
+//                                                                 valid under the published operator key (MOHAR_LOG_OPERATOR,
+//                                                                 default site/operator.json);
 //                                                                 verifies the credential first (MOHAR_SITE_DIR: local did.json)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,13 +70,15 @@ if (cmd === 'keygen') {
   const records = [['consent', consent, consentSalt], ['presentation', presentation, presentationSalt]];
   const acks = {};
   if (logUrl) {
-    // The log operator's signed acknowledgements are kept by the teacher, with the salts.
+    // The log operator's signed acknowledgements are checked and kept by the teacher, with the salts.
+    const operatorFile = process.env.MOHAR_LOG_OPERATOR ?? path.join(ROOT, 'site', 'operator.json');
+    const operator = JSON.parse(fs.readFileSync(operatorFile, 'utf8'));
     for (const [entryType, record, salt] of records) {
-      const { commitment, response } = await commitRecord({ logUrl, entryType, record, salt });
-      if (typeof response?.ack === 'string') acks[entryType] = response.ack;
-      console.error(`committed ${entryType} ${commitment}${acks[entryType] ? ' (acknowledged)' : ''}`);
+      const { commitment, ack } = await commitRecord({ logUrl, entryType, record, salt, operator });
+      acks[entryType] = ack;
+      console.error(`committed ${entryType} ${commitment} (acknowledged)`);
     }
-    if (acks.consent) fs.writeFileSync(`${consentFile}.ack`, `${acks.consent}\n`, { mode: 0o600 });
+    fs.writeFileSync(`${consentFile}.ack`, `${acks.consent}\n`, { mode: 0o600 });
   } else {
     console.error('MOHAR_LOG_URL not set; commitments not posted:');
     for (const [entryType, record, salt] of records) console.error(`  ${entryType} ${saltedCommitment(record, salt)}`);

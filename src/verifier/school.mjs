@@ -43,6 +43,7 @@ class Refusal extends Error {
  *   didFetch?: import('web-did-resolver').WebDidFetch,
  *   fetchText?: (uri: string) => Promise<string>,
  *   logUrl?: string,
+ *   operator?: { id: string },
  *   logFetch?: typeof fetch,
  *   clock?: () => Date,
  *   keyBindingMaxAgeSeconds?: number,
@@ -50,6 +51,7 @@ class Refusal extends Error {
  */
 export function createSchool(config) {
   const { store } = config;
+  if (config.logUrl && !config.operator) throw new Error('a school that posts to the log needs the published log operator key');
   const did = didKeyFromJwk(publicOf(config.schoolPrivateJwk));
   const kid = didKeyKid(did);
   const trusted = config.trustedIssuers ?? [ISSUER_DID];
@@ -60,8 +62,9 @@ export function createSchool(config) {
   async function log(entryType, record, salt) {
     if (!config.logUrl) return { commitment: saltedCommitment(record, salt), posted: false };
     try {
-      const { commitment, response } = await commitRecord({ logUrl: config.logUrl, entryType, record, salt, fetch: config.logFetch });
-      return { commitment, posted: true, ack: typeof response?.ack === 'string' ? response.ack : null };
+      // posted only when the log operator's acknowledgement verified and names this entry.
+      const { commitment, ack } = await commitRecord({ logUrl: config.logUrl, entryType, record, salt, operator: config.operator, fetch: config.logFetch });
+      return { commitment, posted: true, ack };
     } catch (e) {
       return { commitment: saltedCommitment(record, salt), posted: false, error: e.message };
     }

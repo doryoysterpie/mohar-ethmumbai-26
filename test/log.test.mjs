@@ -14,14 +14,16 @@ import { createLogServer } from '../src/log/server.mjs';
 import { readAnchor } from '../src/anchor/sepolia.mjs';
 import { otsState } from '../src/anchor/ots.mjs';
 import { fakeRpc } from './helpers/fake-rpc.mjs';
+import { generateEd25519 } from '../src/shared/keys.mjs';
 import { otsProof } from './helpers/ots-proof.mjs';
 
 const TYPES = ['consent', 'presentation', 'receipt', 'recheck'];
+const OPERATOR = (await generateEd25519()).privateJwk;
 
 function filled(n, config = {}) {
   const store = openLogStore(':memory:');
   let t = Date.UTC(2026, 10, 6, 10, 0, 0);
-  const log = createLog({ store, ots: false, clock: () => new Date((t += 1000)), ...config });
+  const log = createLog({ operatorKey: OPERATOR, store, ots: false, clock: () => new Date((t += 1000)), ...config });
   for (let i = 0; i < n; i += 1) log.commit({ entry_type: TYPES[i % 4], commitment: sha256Hex(`record ${i}`) });
   return { store, log };
 }
@@ -158,12 +160,12 @@ test('a batch closed without a Sepolia anchor is anchored later, once, without t
   const rpc = await fakeRpc();
   try {
     const store = openLogStore(':memory:');
-    const before = createLog({ store, ots: true, stamp: async (root) => otsProof(root) });
+    const before = createLog({ operatorKey: OPERATOR, store, ots: true, stamp: async (root) => otsProof(root) });
     before.commit({ entry_type: 'receipt', commitment: sha256Hex('r') });
     const b = await before.closeBatch();
     assert.equal(b.sepolia.state, 'not_anchored');
     const proof = b.ots.proof;
-    const after = createLog({ store, ots: true, stamp: async () => { throw new Error('must not restamp'); }, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 } });
+    const after = createLog({ operatorKey: OPERATOR, store, ots: true, stamp: async () => { throw new Error('must not restamp'); }, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 } });
     const [a] = await after.anchorPending();
     assert.equal(a.sepolia.state, 'confirmed');
     assert.equal(a.ots.proof, proof);
@@ -245,11 +247,11 @@ test('a modified stored root is not anchored', async () => {
   const rpc = await fakeRpc();
   try {
     const store = openLogStore(':memory:');
-    const before = createLog({ store, ots: false });
+    const before = createLog({ operatorKey: OPERATOR, store, ots: false });
     before.commit({ entry_type: 'receipt', commitment: sha256Hex('r') });
     await before.closeBatch();
     store.db.prepare('UPDATE batches SET root = ? WHERE batch_id = 1').run(sha256Hex('other root'));
-    const after = createLog({ store, ots: false, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 } });
+    const after = createLog({ operatorKey: OPERATOR, store, ots: false, sepolia: { privateKey: generatePrivateKey(), rpcUrls: [rpc.url], pollMs: 10 } });
     await assert.rejects(after.anchorPending(), /batch 1 root does not recompute/);
     assert.equal(rpc.state.txs.size, 0);
   } finally {

@@ -10,8 +10,10 @@ import { openLogStore } from '../src/log/store.mjs';
 import { createLog } from '../src/log/service.mjs';
 import { createLogServer } from '../src/log/server.mjs';
 import { logProblems } from '../src/log/integrity.mjs';
-import { verifyAck, compareAcks, operatorDocument } from '../src/log/ack.mjs';
+import { verifyAck, compareAcks, operatorDocument, signAck } from '../src/log/ack.mjs';
 import { decodeJws, signJws } from '../src/shared/jws.mjs';
+import { commitRecord } from '../src/log/client.mjs';
+import { newSalt } from '../src/shared/commitment.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const HEAD_KEY = 'ef'.repeat(32);
@@ -125,7 +127,7 @@ test('the school keeps the acknowledgements of its receipt and re-check commitme
   const server = createLogServer(log);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
-    const w = await world({ logUrl: `http://127.0.0.1:${server.address().port}` });
+    const w = await world({ logUrl: `http://127.0.0.1:${server.address().port}`, operator: doc });
     const r = await w.school.present({ presentation: await w.present(), consent: w.consent });
     w.now = new Date('2027-01-01T00:00:00.000Z');
     const [rc] = await w.school.recheck();
@@ -135,5 +137,91 @@ test('the school keeps the acknowledgements of its receipt and re-check commitme
     assert.equal((await verifyAck(rrow.recheck_ack, doc)).entry_type, 'recheck');
   } finally {
     server.close();
+  }
+});
+
+test('a log without an operator key refuses commits before appending, and its service does not start', async () => {
+  const store = openLogStore(':memory:');
+  const log = createLog({ store, ots: false });
+  assert.throws(() => log.commit({ entry_type: 'receipt', commitment: sha256Hex('r') }), /no log operator key/);
+  await assert.rejects(log.acknowledge({ seq: 0 }), /no log operator key/);
+  assert.equal(store.entries().length, 0);
+  assert.throws(() => createLogServer(log), /needs an operator key/);
+});
+
+/** A real acknowledging log, and a fetch that lets a test rewrite its /commit responses. */
+async function rewritingLog() {
+  const op = await generateEd25519();
+  const other = await generateEd25519();
+  const log = createLog({ store: openLogStore(':memory:'), ots: false, operatorKey: op.privateJwk });
+  const server = createLogServer(log);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const t = {
+    log, op, other, doc: operatorDocument(op.publicJwk), logUrl: `http://127.0.0.1:${server.address().port}`,
+    rewrite: async (body) => body,
+    close: () => server.close(),
+  };
+  t.fetch = async (u, init) => {
+    const res = await fetch(u, init);
+    const body = await t.rewrite(await res.json());
+    return new Response(JSON.stringify(body), { status: res.status, headers: { 'content-type': 'application/json' } });
+  };
+  return t;
+}
+
+test('the log client rejects a commit whose acknowledgement is missing, malformed, for another entry or under another key', async () => {
+  const t = await rewritingLog();
+  const commit = () => commitRecord({ logUrl: t.logUrl, entryType: 'receipt', record: `r ${Math.random()}`, salt: newSalt(), operator: t.doc, fetch: t.fetch });
+  try {
+    t.rewrite = async (b) => b;
+    const ok = await commit();
+    assert.equal((await verifyAck(ok.ack, t.doc)).seq, ok.response.seq);
+
+    const another = t.log.commit({ entry_type: 'receipt', commitment: sha256Hex('another entry') }).entry;
+    const anotherAck = await t.log.acknowledge(another);
+    const cases = [
+      ['missing', async (b) => { delete b.ack; return b; }, /no acknowledgement/],
+      ['null', async (b) => ({ ...b, ack: null }), /no acknowledgement/],
+      ['garbage', async (b) => ({ ...b, ack: 'not.a.jws' }), /acknowledgement invalid/],
+      ['another entry', async (b) => ({ ...b, ack: anotherAck }), /acknowledgement (seq|entry_hash|commitment) is not the returned entry's/],
+      ['another key', async (b) => ({ ...b, ack: await signAck(b, t.other.privateJwk) }), /acknowledgement invalid: acknowledgement is signed for another operator key/],
+      ['another key under the operator kid', async (b) => {
+        const { header, payload } = decodeJws(b.ack);
+        return { ...b, ack: await signJws(payload, header, t.other.privateJwk) };
+      }, /acknowledgement invalid/],
+      ['entry for another commitment', async (b) => ({ ...b, commitment: sha256Hex('x') }), /entry for another commitment/],
+      ['ack ts not the entry ts', async (b) => ({ ...b, ts: '2000-01-01T00:00:00.000Z' }), /acknowledgement ts is not the returned entry's/],
+    ];
+    for (const [name, rewrite, reason] of cases) {
+      t.rewrite = rewrite;
+      await assert.rejects(commit(), reason, name);
+    }
+    await assert.rejects(
+      commitRecord({ logUrl: t.logUrl, entryType: 'receipt', record: 'r', salt: newSalt(), fetch: t.fetch }),
+      /no published log operator key/,
+    );
+  } finally {
+    t.close();
+  }
+});
+
+test('the school does not report a commit as posted without a valid acknowledgement, and needs the operator key', async () => {
+  const { world } = await import('./helpers/world.mjs');
+  const t = await rewritingLog();
+  try {
+    await assert.rejects(world({ logUrl: t.logUrl }), /needs the published log operator key/);
+    t.rewrite = async (b) => { delete b.ack; return b; };
+    const w = await world({ logUrl: t.logUrl, operator: t.doc, logFetch: t.fetch });
+    const r = await w.school.present({ presentation: await w.present(), consent: w.consent });
+    assert.equal(r.ok, true);
+    assert.equal(r.log.posted, false);
+    assert.match(r.log.error, /no acknowledgement/);
+    assert.equal(w.store.db.prepare('SELECT receipt_ack FROM receipts WHERE receipt_id = ?').get(r.receipt_id).receipt_ack, null);
+    t.rewrite = async (b) => ({ ...b, ack: await signAck(b, t.other.privateJwk) });
+    w.now = new Date('2027-01-01T00:00:00.000Z');
+    const [rc] = await w.school.recheck();
+    assert.equal(w.store.db.prepare('SELECT recheck_ack FROM rechecks WHERE recheck_id = ?').get(rc.recheck_id).recheck_ack, null);
+  } finally {
+    t.close();
   }
 });

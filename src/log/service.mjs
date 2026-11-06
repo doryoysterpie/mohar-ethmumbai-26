@@ -1,6 +1,6 @@
 import { assertCommitment, ENTRY_TYPES } from './chain.mjs';
 import { logProblems } from './integrity.mjs';
-import { signAck } from './ack.mjs';
+import { signAck, operatorKeyId } from './ack.mjs';
 import { merkleRoot, merklePath } from './merkle.mjs';
 import { otsStamp, otsUpgrade, otsState } from '../anchor/ots.mjs';
 import { anchorRoot } from '../anchor/sepolia.mjs';
@@ -50,17 +50,38 @@ export function createLog(config) {
     }
   }
 
+  // The operator key id is derived once, so a malformed key fails here rather than after an append.
+  const operatorId = config.operatorKey ? operatorKeyId(config.operatorKey) : null;
+  const noOperatorKey = () => new Error('no log operator key is configured; commits are refused');
+
   return {
-    /** Appends a commitment. Returns the entry (existing one if the same type and commitment were committed before). */
+    /** did:key of the operator key, or null when none is configured (commits are then refused). */
+    operatorId,
+
+    /**
+     * Appends a commitment. Returns the entry (existing one if the same type and commitment were committed before).
+     * Refused, before anything is appended, when no operator key is configured.
+     */
     commit({ entry_type: entryType, commitment }) {
+      if (!operatorId) throw noOperatorKey();
       assertCommitment(entryType, commitment);
       return store.append(entryType, commitment, clock().toISOString());
     },
 
-    /** Signed acknowledgement of a log entry under the operator key, or null when no operator key is configured. */
+    /** Signed acknowledgement of a log entry under the operator key. Throws when no operator key is configured. */
     async acknowledge(entry) {
-      if (!config.operatorKey) return null;
+      if (!operatorId) throw noOperatorKey();
       return signAck(entry, config.operatorKey);
+    },
+
+    /**
+     * Appends a commitment and signs its acknowledgement. Committing the same type and commitment again returns the
+     * same entry with a fresh acknowledgement of it, so a client whose first response was lost can retry.
+     * @returns {Promise<{ created: boolean, entry: object, ack: string }>}
+     */
+    async commitAcknowledged(body) {
+      const out = this.commit(body);
+      return { ...out, ack: await this.acknowledge(out.entry) };
     },
 
     /**
