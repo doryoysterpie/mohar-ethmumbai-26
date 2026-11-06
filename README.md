@@ -128,6 +128,16 @@ Each check runs whatever the others found and fails with its own reason. The bun
 
 Before a batch is anchored, the log operator can roll back unbatched entries; the log cannot prevent this, and clients hold signed acknowledgements that make it provable. Rotation of the operator key is not in this version.
 
+### Inspector page
+
+`site/inspector/index.html` is the same verifier as one static page, built for the browser:
+
+```
+node bin/build-inspector.mjs            # writes site/inspector/index.html (not tracked; built for publishing)
+```
+
+The page loads `site/sample/bundle.json` and `site/operator.json` on open, and takes a pasted bundle or a chosen file. Besides the site itself, it contacts only the public Sepolia RPCs and the public Bitcoin block explorer. It shows the six checks; the certificate-binding line appears only when a certificate and salt are entered. OpenTimestamps proofs are read in the page by `src/anchor/ots-parse.mjs`, which has no dependency on Node built-ins.
+
 ## Licence
 
 Apache-2.0. See `LICENSE`.

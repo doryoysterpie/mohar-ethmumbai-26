@@ -23,7 +23,7 @@ export function sha256Hex(data) {
  * @returns {string}
  */
 export function toBase64url(bytes) {
-  return Buffer.from(bytes).toString('base64url');
+  return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
@@ -31,7 +31,9 @@ export function toBase64url(bytes) {
  * @returns {Uint8Array}
  */
 export function fromBase64url(text) {
-  return new Uint8Array(Buffer.from(text, 'base64url'));
+  if (typeof text !== 'string' || !/^[A-Za-z0-9_-]*$/.test(text)) throw new TypeError('fromBase64url: not base64url');
+  const b64 = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4);
+  return new Uint8Array(Buffer.from(b64, 'base64'));
 }
 
 /**
