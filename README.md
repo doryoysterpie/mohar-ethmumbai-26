@@ -105,7 +105,7 @@ Reuse of a sequence number is detectable by any acknowledgement holder.
 
 ## Inspector
 
-An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction, the OpenTimestamps proof and the log operator's acknowledgement of the entry. It holds no presentation, no consent and no personal data.
+An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction, the OpenTimestamps proof and the log operator's acknowledgement of the entry. It holds no holder identifier, no presentation, no consent and no certificate detail beyond the receipt's disclosed claims. The receipt itself is pseudonymous eligibility data about one teacher: it names the school, the issuer, the purpose, the verification and status-check times, the status result and the disclosed claims (`qualified`, `paper`, `stage`, `exam_session`, `issuing_body`), and the school can link its `receipt_id` to the teacher.
 
 `bin/inspect.mjs` checks a bundle on its own, with no connection to the school or the log service:
 

@@ -37,7 +37,8 @@ function tokenMatches(given, expected) {
  *   POST /present               { presentation, consent, presentation_salt } -> 200 receipt, 422 typed refusal, 400 without a valid salt
  *   GET  /status/{holder_did}   latest receipt and re-check summary; requires the staff token
  *   POST /recheck               term status check of every active receipt; requires the staff token
- *   GET  /export/{id}           export bundle for a receipt or re-check receipt id (no token; the bundle carries no personal data)
+ *   GET  /export/{id}           export bundle for a receipt or re-check receipt id (no token; the bundle carries no holder
+ *                               identifier, presentation or consent; the receipt in it is pseudonymous eligibility data)
  * The staff token is sent as `authorization: Bearer <adminToken>`; both staff routes are disabled when no token is set.
  * @param {ReturnType<typeof import('./school.mjs').createSchool>} school
  * @param {{ adminToken?: string }} [options]
