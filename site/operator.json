@@ -1,0 +1,9 @@
+{
+  "id": "did:key:z6MkgvDZZZ8ExoJ489rWxMJsWh4fe6hhFzZ6Nd61PVcyZyy2",
+  "type": "log operator key",
+  "publicKeyJwk": {
+    "kty": "OKP",
+    "crv": "Ed25519",
+    "x": "JJ8_dBQN-29owrQQovxqjcfOc88Uutip9fYvESoRgfE"
+  }
+}
