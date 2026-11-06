@@ -2,7 +2,9 @@
 
 > **SIMULATED.** Every issuer, credential and certificate in this repository is simulated test data. No real issuing body is connected.
 
-Mohar records that a school verified a teacher's eligibility credential, and makes that record checkable later by anyone holding the export bundle.
+In 2025, 25,753 school appointments in West Bengal were annulled. The records that would have separated the untainted appointments from the tainted ones had been destroyed. Every teacher in service with more than five years left must hold a Teacher Eligibility Test qualification by 31 August 2028, and the department will have to audit it. Rule 4 of India's Digital Personal Data Protection Rules, 2025, which covers Consent Managers, commences on 13 November 2026.
+
+Mohar records that a school checked a teacher's eligibility credential. The record survives the platform's deletion and can be verified by anyone holding the export bundle.
 
 ## Run
 
