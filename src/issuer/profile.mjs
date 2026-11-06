@@ -19,7 +19,7 @@ export const VISIBLE_CLAIMS = ['iss', 'sub', 'vct', 'iat', 'status', 'cnf', '_sd
 
 /** Claims that are selectively disclosable, in credential order. */
 export const DISCLOSABLE = [
-  'qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'name',
+  'qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'certificate_salt', 'name',
   'roll_no', 'dob', 'category', 'mother_name', 'father_or_husband_name', 'marks',
 ];
 

@@ -7,6 +7,7 @@ import { entryHash } from '../log/chain.mjs';
 import { rootFromPath, batchRoot } from '../log/merkle.mjs';
 import { readAnchorFrom } from '../anchor/sepolia.mjs';
 import { otsState, otsBitcoinAttestations } from '../anchor/ots.mjs';
+import { certificateCommitment } from '../issuer/credential.mjs';
 import { verifyAck } from '../log/ack.mjs';
 
 export const SEPOLIA_CHAIN_ID = 11155111;
@@ -132,6 +133,25 @@ async function checkAck(b, operator) {
   return pass('acknowledgement', `operator ${operator.id} acknowledged entry ${a.seq} at ${a.ts}`);
 }
 
+/**
+ * 7 (optional). The certificate and its salt, obtained from the school's presentation, recompute the receipt's
+ * certificate_commitment. Reported as "not supplied" when no certificate and salt are given.
+ */
+function checkCertificate(b, certificate, salt) {
+  if (certificate === undefined && salt === undefined) return { check: 'certificate binding', result: 'not supplied', detail: 'no certificate and salt supplied' };
+  try {
+    if (certificate === undefined || salt === undefined) return fail('certificate binding', 'certificate and salt must be supplied together');
+    const { payload } = decodeJws(b.record);
+    if (typeof payload.certificate_commitment !== 'string') return fail('certificate binding', 'record carries no certificate_commitment');
+    if (certificateCommitment(certificate, salt) !== payload.certificate_commitment) {
+      return fail('certificate binding', 'certificate and salt do not recompute the receipt certificate_commitment');
+    }
+    return pass('certificate binding', 'certificate and salt recompute the receipt certificate_commitment');
+  } catch (e) {
+    return fail('certificate binding', `certificate binding cannot be checked: ${e.message}`);
+  }
+}
+
 /** Bitcoin block header by height from a public Esplora API (default blockstream.info). Returns { merkleroot, time }. */
 export function esploraHeaders(base = 'https://blockstream.info/api') {
   return async (height) => {
@@ -146,18 +166,20 @@ export function esploraHeaders(base = 'https://blockstream.info/api') {
 }
 
 /**
- * Runs the six checks on a bundle. Each check runs whatever the others found.
- * `ok` is true when signature, entry, merkle and sepolia pass, ots passes or is pending, and the acknowledgement does
- * not fail (it passes or is not supplied).
+ * Runs the six checks on a bundle, and the optional seventh (certificate binding) when a certificate and its salt are
+ * supplied. Each check runs whatever the others found. `ok` is true when signature, entry, merkle and sepolia pass,
+ * ots passes or is pending, the acknowledgement passes or is not supplied, and certificate binding passes or is not
+ * supplied.
  * @param {any} bundle
  * @param {{ rpcUrls?: string[], bitcoinHeader?: (height: number) => Promise<{ merkleroot: string, time: number }>,
- *   operator?: { id: string } }} [options] operator is the published operator document (operator.json)
+ *   operator?: { id: string }, certificate?: Record<string, unknown>, certificateSalt?: string }} [options]
+ *   operator is the published operator document (operator.json)
  * @returns {Promise<{ ok: boolean, checks: CheckResult[] }>}
  */
 export async function verifyBundle(bundle, options = {}) {
   if (bundle?.format !== 'mohar-bundle/1') {
     const r = fail('format', `not a mohar-bundle/1 bundle`);
-    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots', 'acknowledgement'].map((check) => ({ ...r, check })) };
+    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots', 'acknowledgement', 'certificate binding'].map((check) => ({ ...r, check })) };
   }
   const checks = [
     await checkSignature(bundle),
@@ -166,7 +188,8 @@ export async function verifyBundle(bundle, options = {}) {
     await checkSepolia(bundle, options.rpcUrls),
     await checkOts(bundle, options.bitcoinHeader ?? esploraHeaders()),
     await checkAck(bundle, options.operator),
+    checkCertificate(bundle, options.certificate, options.certificateSalt),
   ];
-  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks[4].result !== 'fail' && checks[5].result !== 'fail';
+  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks.slice(4).every((c) => c.result !== 'fail');
   return { ok, checks };
 }

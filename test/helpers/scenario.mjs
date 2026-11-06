@@ -71,6 +71,10 @@ export async function scenario(options = {}) {
   };
 
   const fetchBundle = async (id) => fetch(`${schoolUrl}/export/${id}`);
+  /** The certificate_salt the teacher disclosed to the school in the presentation. */
+  const certificateSalt = presentation.split('~').slice(1, -1)
+    .map((d) => JSON.parse(Buffer.from(d, 'base64url')))
+    .find((d) => d[1] === 'certificate_salt')[2];
 
   /** Closes both services and deletes both databases (and their WAL files). Safe to call more than once. */
   let destroyed = false;
@@ -86,7 +90,7 @@ export async function scenario(options = {}) {
   };
 
   return {
-    w, school, schoolStore, log, rpc, dir, consentSalt, presentationSalt, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers, operator,
+    w, school, schoolStore, logStore, certificateSalt, log, rpc, dir, consentSalt, presentationSalt, schoolUrl, logUrl, receipt: r, recheck, batch, presentation, bitcoinHeader, headers, operator,
     fetchBundle, destroyServices, close: async () => { await destroyServices(); rpc.close(); },
   };
 }

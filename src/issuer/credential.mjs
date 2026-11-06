@@ -1,7 +1,8 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+import { newSalt, isSalt } from '../shared/commitment.mjs';
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import { decodeSdJwt } from '@sd-jwt/core';
-import { sha256, sha256Hex, canonicalJson, toBase64url } from '../shared/encoding.mjs';
+import { sha256, canonicalJson, toBase64url } from '../shared/encoding.mjs';
 import { signerFor, verifierFor, didKeyFromJwk, publicOf } from '../shared/keys.mjs';
 import { resolveIssuerKey } from './did-web.mjs';
 import {
@@ -17,12 +18,23 @@ export async function hasher(data, alg) {
 /** @param {number} length */
 const saltGenerator = (length) => toBase64url(randomBytes(length));
 
+/** Domain string of the certificate commitment. */
+export const CERT_DOMAIN = 'mohar/cert/v1';
+
 /**
- * SHA-256 (hex) of the canonical JSON of a certificate.
+ * Commitment to a certificate: SHA-256("mohar/cert/v1" || certificate_salt || canonical certificate JSON), with the
+ * domain as ASCII, the salt as its 32 raw bytes and the canonical JSON as UTF-8. Without the salt it cannot be
+ * recomputed from the certificate.
  * @param {Record<string, unknown>} certificate
+ * @param {string} salt 64 lowercase hex characters
  */
-export function certificateCommitment(certificate) {
-  return sha256Hex(canonicalJson(certificate));
+export function certificateCommitment(certificate, salt) {
+  if (!isSalt(salt)) throw new Error('certificate salt must be 32 bytes as 64 lowercase hex characters');
+  return createHash('sha256')
+    .update(Buffer.from(CERT_DOMAIN, 'ascii'))
+    .update(Buffer.from(salt, 'hex'))
+    .update(Buffer.from(canonicalJson(certificate), 'utf8'))
+    .digest('hex');
 }
 
 /**
@@ -53,6 +65,9 @@ export async function issueCredential(p) {
   assertCertificate(p.certificate);
   const c = p.certificate;
   const holder = publicOf(p.holderPublicJwk);
+  // The certificate salt is always fresh from the CSPRNG; a caller cannot supply one.
+  if ('certificateSalt' in p || 'certificate_salt' in p) throw new Error('the certificate salt is made at issuance and cannot be supplied');
+  const certificateSalt = newSalt();
   const sdjwt = new SDJwtVcInstance({
     signer: signerFor(p.issuerPrivateJwk), signAlg: 'EdDSA', hasher, hashAlg: 'sha-256', saltGenerator,
   });
@@ -68,7 +83,8 @@ export async function issueCredential(p) {
     stage: c.stage,
     exam_session: c.exam_session,
     issuing_body: ISSUING_BODY,
-    certificate_commitment: certificateCommitment(c),
+    certificate_commitment: certificateCommitment(c, certificateSalt),
+    certificate_salt: certificateSalt,
     name: c.name,
     roll_no: c.roll_no,
     dob: c.dob,

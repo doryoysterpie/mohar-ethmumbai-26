@@ -48,6 +48,7 @@ const VALUE_RULES = {
   exam_session: (v) => typeof v === 'string' && /^[A-Z]{3,9} \d{4}$/.test(v),
   issuing_body: (v) => v === ISSUING_BODY,
   certificate_commitment: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
+  certificate_salt: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
   name: (v) => typeof v === 'string' && v.length >= 1 && v.length <= 120 && !/[\u0000-\u001f\u007f]/.test(v),
 };
 

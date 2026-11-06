@@ -9,7 +9,7 @@ export const PURPOSE = 'teacher_eligibility_verification';
 export const RECORD_SHAPE = 'DPDP-Rules-2025/Rule-4-shaped';
 
 /** Claims a teacher discloses to a school for eligibility verification. */
-export const CONSENT_SCOPE = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'name'];
+export const CONSENT_SCOPE = ['qualified', 'paper', 'stage', 'exam_session', 'issuing_body', 'certificate_commitment', 'certificate_salt', 'name'];
 
 /** Month and day (UTC) on which the academic year ends; configurable with MOHAR_ACADEMIC_YEAR_END=MM-DD. */
 const YEAR_END = (process.env.MOHAR_ACADEMIC_YEAR_END ?? '03-31').split('-').map(Number);

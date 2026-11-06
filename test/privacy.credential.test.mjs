@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { generateEd25519 } from '../src/shared/keys.mjs';
 import { didDocument } from '../src/issuer/did-web.mjs';
-import { issueCredential } from '../src/issuer/credential.mjs';
+import { issueCredential, certificateCommitment } from '../src/issuer/credential.mjs';
+import { sha256Hex, canonicalJson } from '../src/shared/encoding.mjs';
 import { ISSUER_DID, DISCLOSABLE } from '../src/issuer/profile.mjs';
 
 const VISIBLE = ['iss', 'sub', 'vct', 'iat', 'status', 'cnf', '_sd', '_sd_alg'];
@@ -34,3 +35,41 @@ for (const entry of manifest.credentials) {
     for (const value of personal) assert.ok(!jwtText.includes(value), `certificate value "${value}" is visible`);
   });
 }
+
+test('two credentials issued for the same certificate JSON yield different certificate_commitment values', async () => {
+  const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
+  const issuer = await generateEd25519();
+  const holder = await generateEd25519();
+  const { kid } = didDocument(ISSUER_DID, issuer.publicJwk);
+  const commitmentOf = async () => {
+    const cred = await issueCredential({ certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid });
+    const d = cred.split('~').slice(1, -1).map((x) => JSON.parse(Buffer.from(x, 'base64url')));
+    return { commitment: d.find((x) => x[1] === 'certificate_commitment')[2], salt: d.find((x) => x[1] === 'certificate_salt')[2] };
+  };
+  const a = await commitmentOf();
+  const b = await commitmentOf();
+  assert.notEqual(a.commitment, b.commitment);
+  assert.notEqual(a.salt, b.salt);
+  for (const c of [a.commitment, b.commitment]) assert.notEqual(c, sha256Hex(canonicalJson(cert)));
+  assert.equal(certificateCommitment(cert, a.salt), a.commitment);
+});
+
+test('issuance has no caller-controlled certificate salt; default issuances get fresh salts', async () => {
+  const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
+  const issuer = await generateEd25519();
+  const holder = await generateEd25519();
+  const { kid } = didDocument(ISSUER_DID, issuer.publicJwk);
+  const base = { certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex: 0, issuerPrivateJwk: issuer.privateJwk, kid };
+  for (const extra of [{ certificateSalt: '00'.repeat(32) }, { certificate_salt: '00'.repeat(32) }, { certificateSalt: undefined }]) {
+    await assert.rejects(issueCredential({ ...base, ...extra }), /cannot be supplied/);
+  }
+  const salts = new Set();
+  const commitments = new Set();
+  for (let i = 0; i < 5; i += 1) {
+    const d = (await issueCredential(base)).split('~').slice(1, -1).map((x) => JSON.parse(Buffer.from(x, 'base64url')));
+    salts.add(d.find((x) => x[1] === 'certificate_salt')[2]);
+    commitments.add(d.find((x) => x[1] === 'certificate_commitment')[2]);
+  }
+  assert.equal(salts.size, 5);
+  assert.equal(commitments.size, 5);
+});

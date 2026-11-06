@@ -26,11 +26,12 @@ test.before(async () => {
 });
 test.after(async () => { await s.close(); });
 
-test('an untouched bundle passes all six checks', async () => {
+test('an untouched bundle passes all six checks and reports certificate binding as not supplied', async () => {
   const r = await verifyBundle(clone(), opts());
   assert.equal(r.ok, true);
   assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [
     ['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass'], ['acknowledgement', 'pass'],
+    ['certificate binding', 'not supplied'],
   ]);
 });
 
@@ -168,6 +169,22 @@ test('a bundle that is not a Mohar bundle fails every check', async () => {
   const r = await verifyBundle({ format: 'other' }, opts());
   assert.equal(r.ok, false);
   assert.ok(r.checks.every((c) => c.result === 'fail'));
+});
+
+test('the certificate-binding line passes with the correct salt and fails with the named reason on a wrong salt', async () => {
+  const { cert } = await import('./helpers/world.mjs');
+  const right = await verifyBundle(clone(), { ...opts(), certificate: cert, certificateSalt: s.certificateSalt });
+  assert.equal(right.checks[6].check, 'certificate binding');
+  assert.equal(right.checks[6].result, 'pass');
+  assert.equal(right.ok, true);
+  const wrong = await verifyBundle(clone(), { ...opts(), certificate: cert, certificateSalt: newSalt() });
+  assert.equal(wrong.checks[6].result, 'fail');
+  assert.match(wrong.checks[6].detail, /certificate and salt do not recompute the receipt certificate_commitment/);
+  assert.equal(wrong.ok, false);
+  const otherCert = await verifyBundle(clone(), { ...opts(), certificate: { ...cert, roll_no: 'SIM-2024-999999' }, certificateSalt: s.certificateSalt });
+  assert.equal(otherCert.checks[6].result, 'fail');
+  const half = await verifyBundle(clone(), { ...opts(), certificate: cert });
+  assert.match(half.checks[6].detail, /must be supplied together/);
 });
 
 test('each exported provenance field is bound: a change to any one fails with a named reason', async () => {

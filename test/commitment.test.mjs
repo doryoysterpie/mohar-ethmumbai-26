@@ -18,3 +18,11 @@ test('salts are 32 fresh bytes and malformed salts are refused', () => {
   }
   assert.throws(() => saltedCommitment('', newSalt()), /record must be a non-empty string/);
 });
+
+test('the certificate commitment is SHA-256("mohar/cert/v1" || salt || canonical JSON) (fixed vector)', async () => {
+  const { certificateCommitment, CERT_DOMAIN } = await import('../src/issuer/credential.mjs');
+  assert.equal(CERT_DOMAIN, 'mohar/cert/v1');
+  // Computed independently: sha256(ascii domain || 32 raw salt bytes || UTF-8 canonical JSON {"a":1,"b":"x"}).
+  assert.equal(certificateCommitment({ b: 'x', a: 1 }, '22'.repeat(32)), 'c08051d97fe16f4bb7b4bfe3493ef65d8e4ac68b3dfb68b912078f7a57526f09');
+  assert.throws(() => certificateCommitment({ a: 1 }, 'ab'), /certificate salt must be 32 bytes/);
+});
