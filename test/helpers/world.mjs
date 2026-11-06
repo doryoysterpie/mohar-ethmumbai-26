@@ -46,12 +46,13 @@ export async function world({ logUrl, operator, logFetch } = {}) {
     issuer, holder, schoolKey, kid, didFetch,
     statuses: [0, 1, 0],
     listDown: false,
+    // The test clock. Credentials and status lists in this world are signed at it, not at the wall clock.
     now: new Date('2026-11-06T10:00:00Z'),
     holderDid: didKeyFromJwk(holder.publicJwk),
   };
   w.fetchText = async () => {
     if (w.listDown) throw new Error('ECONNREFUSED');
-    return buildStatusList({ uri: STATUS_LIST_URI, statuses: w.statuses, issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk) });
+    return buildStatusList({ uri: STATUS_LIST_URI, statuses: w.statuses, issuerDid: ISSUER_DID, kid, signer: signerFor(issuer.privateJwk), iat: Math.floor(w.now.getTime() / 1000) });
   };
   w.store = openStore(':memory:');
   w.rawSchool = createSchool({
@@ -61,7 +62,7 @@ export async function world({ logUrl, operator, logFetch } = {}) {
   w.school = { ...w.rawSchool, present: (body) => w.rawSchool.present({ ...body, presentation_salt: body?.presentation_salt ?? newSalt() }) };
   w.consent = await signConsent({ holderDid: w.holderDid, holderPrivateJwk: holder.privateJwk, schoolDid: w.school.did, now: w.now });
   w.credential = (statusIndex = 0, issuerPrivateJwk = issuer.privateJwk) => issueCredential({
-    certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex, issuerPrivateJwk, kid,
+    certificate: cert, holderPublicJwk: holder.publicJwk, statusIndex, issuerPrivateJwk, kid, iat: Math.floor(w.now.getTime() / 1000),
   });
   w.present = async (over = {}) => buildPresentation({
     credential: over.credential ?? await w.credential(over.statusIndex ?? 0),
