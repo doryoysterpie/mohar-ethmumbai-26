@@ -64,8 +64,9 @@ export function createLog(config) {
       const entries = store.unbatched();
       if (entries.length === 0) return null;
       assertConsistent('batch not closed');
-      const root = merkleRoot(entries.map((e) => e.entry_hash));
-      const batchId = store.closeBatch(entries, root, clock().toISOString());
+      const treeRoot = merkleRoot(entries.map((e) => e.entry_hash));
+      const batchId = store.closeBatch(entries, treeRoot, clock().toISOString());
+      const { root } = store.batch(batchId);
       await Promise.all([anchorSepolia(batchId, root), anchorOts(batchId, root)]);
       return this.batch(batchId);
     },
@@ -114,6 +115,7 @@ export function createLog(config) {
         first_seq: b.first_seq,
         last_seq: b.last_seq,
         size: b.size,
+        tree_root: b.tree_root,
         root: b.root,
         closed_at: b.closed_at,
         sepolia: b.sepolia_tx

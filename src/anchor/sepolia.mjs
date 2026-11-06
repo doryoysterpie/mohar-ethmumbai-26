@@ -94,6 +94,36 @@ export async function readAnchor({ txHash, rpcUrls }) {
 }
 
 /**
+ * Everything a verifier needs about an anchor transaction, read from one RPC: the chain id it reports, the
+ * transaction's calldata, sender, recipient and block, and its receipt status. Returns null when this RPC does not
+ * have the transaction (or its receipt).
+ * @param {string} url
+ * @param {string} txHash
+ * @returns {Promise<{ chain_id: number, calldata: string, from: string, to: string | null, block_number: number, status: string } | null>}
+ */
+export async function readAnchorFrom(url, txHash) {
+  const c = publicClient(url);
+  const chainId = await c.getChainId();
+  let tx;
+  let receipt;
+  try {
+    tx = await c.getTransaction({ hash: /** @type {`0x${string}`} */ (txHash) });
+    receipt = await c.getTransactionReceipt({ hash: /** @type {`0x${string}`} */ (txHash) });
+  } catch {
+    return { chain_id: chainId, missing: true };
+  }
+  return {
+    chain_id: chainId,
+    calldata: tx.input.replace(/^0x/, '').toLowerCase(),
+    from: tx.from.toLowerCase(),
+    to: tx.to ? tx.to.toLowerCase() : null,
+    block_number: Number(receipt.blockNumber),
+    tx_block_number: tx.blockNumber === null ? null : Number(tx.blockNumber),
+    status: receipt.status,
+  };
+}
+
+/**
  * Chain id the RPCs report (first that answers). The client is configured for Sepolia, but does not itself check that
  * the RPC is on Sepolia, so a verifier asks.
  * @param {string[]} rpcUrls

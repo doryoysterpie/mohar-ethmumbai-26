@@ -42,7 +42,7 @@ export function buildBundle({ record, salt, recordType, proof }) {
       entry_hash: proof.entry.entry_hash,
     },
     merkle_path: { index: proof.merkle_path.index, size: proof.merkle_path.size, siblings: [...proof.merkle_path.siblings] },
-    batch: { batch_id: batch.batch_id, root: batch.root, size: batch.size, closed_at: batch.closed_at },
+    batch: { batch_id: batch.batch_id, first_seq: batch.first_seq, size: batch.size, closed_at: batch.closed_at, root: batch.root },
     sepolia: batch.sepolia?.tx_hash
       ? { chain_id: batch.sepolia.chain_id, tx_hash: batch.sepolia.tx_hash, block_number: batch.sepolia.block_number }
       : null,

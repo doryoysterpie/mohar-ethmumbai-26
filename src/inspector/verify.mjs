@@ -4,8 +4,8 @@ import { saltedCommitment, isSalt } from '../shared/commitment.mjs';
 import { jwkFromDidKey } from '../shared/keys.mjs';
 import { decodeJws, verifyJws } from '../shared/jws.mjs';
 import { entryHash } from '../log/chain.mjs';
-import { rootFromPath } from '../log/merkle.mjs';
-import { readAnchor, chainIdOf } from '../anchor/sepolia.mjs';
+import { rootFromPath, batchRoot } from '../log/merkle.mjs';
+import { readAnchorFrom } from '../anchor/sepolia.mjs';
 import { otsState, otsBitcoinAttestations } from '../anchor/ots.mjs';
 import { certificateCommitment } from '../issuer/credential.mjs';
 
@@ -48,13 +48,18 @@ function checkEntry(b) {
   }
 }
 
-/** 3. The entry's Merkle path leads to the batch root. */
+/**
+ * 3. The entry's Merkle path and the batch header (id, first seq, size, closing time) together recompute the
+ * batch root, and the entry's seq is its position in that batch.
+ */
 function checkMerkle(b) {
   try {
     if (b.merkle_path.size !== b.batch.size) return fail('merkle', 'path size is not the batch size');
-    const root = rootFromPath(b.entry.entry_hash, b.merkle_path);
-    if (root !== b.batch.root) return fail('merkle', 'Merkle path leads to a different root');
-    return pass('merkle', `entry ${b.merkle_path.index} of ${b.batch.size} in batch ${b.batch.batch_id}`);
+    const tree = rootFromPath(b.entry.entry_hash, b.merkle_path);
+    const header = { batch_id: b.batch.batch_id, first_seq: b.batch.first_seq, size: b.batch.size, closed_at: b.batch.closed_at };
+    if (batchRoot(header, tree) !== b.batch.root) return fail('merkle', 'Merkle path and batch header lead to a different root');
+    if (b.entry.seq !== b.batch.first_seq + b.merkle_path.index) return fail('merkle', 'entry seq is not its position in the batch');
+    return pass('merkle', `entry seq ${b.entry.seq}, position ${b.merkle_path.index} of ${b.batch.size} in batch ${b.batch.batch_id} closed ${b.batch.closed_at}`);
   } catch (e) {
     return fail('merkle', `Merkle path invalid: ${e.message}`);
   }
@@ -65,16 +70,25 @@ async function checkSepolia(b, rpcUrls) {
   if (!b.sepolia?.tx_hash) return fail('sepolia', 'bundle has no Sepolia anchor');
   if (b.sepolia.chain_id !== SEPOLIA_CHAIN_ID) return fail('sepolia', `anchor is on chain ${b.sepolia.chain_id}, not Sepolia`);
   if (!rpcUrls?.length) return fail('sepolia', 'no Sepolia RPC configured for the check');
-  try {
-    const chain = await chainIdOf(rpcUrls);
-    if (chain !== SEPOLIA_CHAIN_ID) return fail('sepolia', `RPC is on chain ${chain}, not Sepolia`);
-    const tx = await readAnchor({ txHash: b.sepolia.tx_hash, rpcUrls });
+  // One RPC answers everything: its chain id, the transaction and its receipt. The first RPC that reports Sepolia
+  // and has the transaction is used; any other RPC is skipped.
+  const tried = [];
+  for (const url of rpcUrls) {
+    let tx;
+    try {
+      tx = await readAnchorFrom(url, b.sepolia.tx_hash);
+    } catch (e) {
+      tried.push(`${new URL(url).host}: ${e.shortMessage ?? e.message}`);
+      continue;
+    }
+    if (tx.chain_id !== SEPOLIA_CHAIN_ID) { tried.push(`${new URL(url).host}: chain ${tx.chain_id}, not Sepolia`); continue; }
+    if (tx.missing) { tried.push(`${new URL(url).host}: no such transaction`); continue; }
+    if (tx.status !== 'success') return fail('sepolia', 'Sepolia transaction did not succeed');
     if (tx.calldata !== b.batch.root) return fail('sepolia', 'Sepolia calldata does not match the batch root');
-    if (tx.block_number === null) return fail('sepolia', 'Sepolia transaction is not in a block yet');
-    return pass('sepolia', `root in tx ${b.sepolia.tx_hash}, block ${tx.block_number}`);
-  } catch (e) {
-    return fail('sepolia', `Sepolia transaction not found: ${e.message}`);
+    if (b.sepolia.block_number !== tx.block_number) return fail('sepolia', `bundle says block ${b.sepolia.block_number}; the transaction is in block ${tx.block_number}`);
+    return pass('sepolia', `root in tx ${b.sepolia.tx_hash}, block ${tx.block_number} (${new URL(url).host})`);
   }
+  return fail('sepolia', `Sepolia transaction not found on a Sepolia RPC: ${tried.join('; ')}`);
 }
 
 /** 5. The OpenTimestamps proof is for the batch root, and any Bitcoin attestation matches its block header. */

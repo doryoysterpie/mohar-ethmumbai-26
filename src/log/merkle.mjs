@@ -15,6 +15,30 @@ export const EMPTY_LEAF = hex(sha256(Buffer.from([0x02])));
 /** Inner node: SHA-256(0x01 || left || right). */
 export const nodeHash = (l, r) => hex(sha256(Buffer.concat([Buffer.from([0x01]), bytes(l), bytes(r)])));
 
+const u64 = (n) => {
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error('batch header numbers must be non-negative integers');
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64BE(BigInt(n));
+  return b;
+};
+const TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * Root of a batch, the value that is anchored: SHA-256(0x03 || "mohar/batch/v1" || batch_id || first_seq || size ||
+ * closed_at || tree_root), numbers as 8-byte big-endian, closed_at as its 24 ASCII characters, tree_root as 32 bytes.
+ * It commits to the batch's identity, position, size and closing time as well as to its entries.
+ * @param {{ batch_id: number, first_seq: number, size: number, closed_at: string }} header
+ * @param {string} treeRoot Merkle root over the batch's entries
+ */
+export function batchRoot(header, treeRoot) {
+  if (typeof header.closed_at !== 'string' || !TS.test(header.closed_at)) throw new Error('closed_at must be an ISO 8601 UTC time with milliseconds');
+  if (!Number.isSafeInteger(header.size) || header.size < 1) throw new Error('a batch needs at least one entry');
+  return hex(sha256(Buffer.concat([
+    Buffer.from([0x03]), Buffer.from('mohar/batch/v1', 'ascii'),
+    u64(header.batch_id), u64(header.first_seq), u64(header.size), Buffer.from(header.closed_at, 'ascii'), bytes(treeRoot),
+  ])));
+}
+
 /** Smallest power of two ≥ n (n ≥ 1). */
 export const paddedSize = (n) => {
   if (!Number.isInteger(n) || n < 1) throw new Error('a batch needs at least one entry');
