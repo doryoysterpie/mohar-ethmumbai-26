@@ -92,6 +92,21 @@ node --env-file=.env bin/log.mjs check --anchors   # also compare each stored ro
 | GET | `/batches/{id}` | batch summary |
 | POST | `/batch`, `/upgrade` | operator token (`authorization: Bearer <MOHAR_ADMIN_TOKEN>`); off when the token is not set |
 
+### Acknowledgements
+
+Every accepted `/commit` returns an `ack`: a JWS (`log-ack+jwt`) signed by the log operator's Ed25519 key over `{ seq, entry_hash, entry_type, commitment, ts, operator_key_id }`. The log stores nothing extra; the teacher and the school keep their acknowledgements with their salts. The operator key is separate from the Sepolia key and is published in `site/operator.json`: `did:key:z6MkgvDZZZ8ExoJ489rWxMJsWh4fe6hhFzZ6Nd61PVcyZyy2`. Two acknowledgements with the same `seq` and different entry hashes are a signed proof that the operator replaced an entry:
+
+```
+node bin/log.mjs operator-keygen                       # operator key in .keys/ (not tracked); writes site/operator.json
+node bin/log.mjs equivocation a.ack b.ack [--operator site/operator.json]   # exit 3 on equivocation
+```
+
+Reuse of a sequence number is detectable by any acknowledgement holder.
+
+## Limitations
+
+Before a batch is anchored, the log operator can roll back unbatched entries; the log cannot prevent this, and clients hold signed acknowledgements that make it provable. Rotation of the operator key is not in this version.
+
 ## Licence
 
 Apache-2.0. See `LICENSE`.

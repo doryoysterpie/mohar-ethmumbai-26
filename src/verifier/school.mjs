@@ -60,8 +60,8 @@ export function createSchool(config) {
   async function log(entryType, record, salt) {
     if (!config.logUrl) return { commitment: saltedCommitment(record, salt), posted: false };
     try {
-      const { commitment } = await commitRecord({ logUrl: config.logUrl, entryType, record, salt, fetch: config.logFetch });
-      return { commitment, posted: true };
+      const { commitment, response } = await commitRecord({ logUrl: config.logUrl, entryType, record, salt, fetch: config.logFetch });
+      return { commitment, posted: true, ack: typeof response?.ack === 'string' ? response.ack : null };
     } catch (e) {
       return { commitment: saltedCommitment(record, salt), posted: false, error: e.message };
     }
@@ -222,7 +222,9 @@ export function createSchool(config) {
         recheck_due: receipt.recheck_due,
         valid_until: c.valid_until,
       });
-      return { ok: true, receipt_id: receiptId, receipt: receiptJws, status_reason: status.reason, log: await log('receipt', receiptJws, receiptSalt) };
+      const logged = await log('receipt', receiptJws, receiptSalt);
+      if (logged.ack) store.setReceiptAck(receiptId, logged.ack);
+      return { ok: true, receipt_id: receiptId, receipt: receiptJws, status_reason: status.reason, log: logged };
     },
 
     /** Latest receipt and re-check for a holder, or null. */
@@ -270,7 +272,9 @@ export function createSchool(config) {
           recheck_id: recheck.recheck_id, receipt_id: r.receipt_id, recheck: jws, recheck_salt: recheckSalt, status_result: status.result,
           checked_at: recheck.status_checked_at, next_recheck_due: recheck.next_recheck_due, alert: alert ? 1 : 0,
         });
-        out.push({ ...recheck, recheck: jws, status_reason: status.reason, log: await log('recheck', jws, recheckSalt) });
+        const logged = await log('recheck', jws, recheckSalt);
+        if (logged.ack) store.setRecheckAck(recheck.recheck_id, logged.ack);
+        out.push({ ...recheck, recheck: jws, status_reason: status.reason, log: logged });
       }
       return out;
     },

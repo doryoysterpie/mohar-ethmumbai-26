@@ -88,7 +88,7 @@ test('no field of a log entry, root or anchor transaction is personal data, or r
 
 test('committing the same record twice yields two different commitments, neither equal to SHA-256 of the record', async () => {
   const bodies = [];
-  const server = createLogServer({ commit: (b) => { bodies.push(b); return { created: true, entry: {} }; } });
+  const server = createLogServer({ commit: (b) => { bodies.push(b); return { created: true, entry: {} }; }, acknowledge: async () => null });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const logUrl = `http://127.0.0.1:${server.address().port}`;
   try {

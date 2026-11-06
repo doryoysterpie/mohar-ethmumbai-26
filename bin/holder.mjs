@@ -4,7 +4,8 @@
 //   consent <name> <school-did>                                   prints a signed consent record
 //   present <name> <credential-file> <consent-file> <school-did> <nonce>
 //                                                                 prints { presentation, presentation_salt }; keeps the consent
-//                                                                 salt in <consent-file>.salt; posts both salted
+//                                                                 salt in <consent-file>.salt (and its log acknowledgement in
+//                                                                 <consent-file>.ack); posts both salted
 //                                                                 commitments to the log service at MOHAR_LOG_URL when set;
 //                                                                 verifies the credential first (MOHAR_SITE_DIR: local did.json)
 import fs from 'node:fs';
@@ -62,18 +63,22 @@ if (cmd === 'keygen') {
   if (!isSalt(consentSalt)) throw new Error(`${consentSaltFile} does not hold a 32-byte hex salt`);
   fs.writeFileSync(consentSaltFile, `${consentSalt}\n`, { mode: 0o600 });
   const presentationSalt = newSalt();
-  process.stdout.write(`${JSON.stringify({ presentation, presentation_salt: presentationSalt })}\n`);
   const logUrl = process.env.MOHAR_LOG_URL;
   const records = [['consent', consent, consentSalt], ['presentation', presentation, presentationSalt]];
+  const acks = {};
   if (logUrl) {
+    // The log operator's signed acknowledgements are kept by the teacher, with the salts.
     for (const [entryType, record, salt] of records) {
-      const { commitment } = await commitRecord({ logUrl, entryType, record, salt });
-      console.error(`committed ${entryType} ${commitment}`);
+      const { commitment, response } = await commitRecord({ logUrl, entryType, record, salt });
+      if (typeof response?.ack === 'string') acks[entryType] = response.ack;
+      console.error(`committed ${entryType} ${commitment}${acks[entryType] ? ' (acknowledged)' : ''}`);
     }
+    if (acks.consent) fs.writeFileSync(`${consentFile}.ack`, `${acks.consent}\n`, { mode: 0o600 });
   } else {
     console.error('MOHAR_LOG_URL not set; commitments not posted:');
     for (const [entryType, record, salt] of records) console.error(`  ${entryType} ${saltedCommitment(record, salt)}`);
   }
+  process.stdout.write(`${JSON.stringify({ presentation, presentation_salt: presentationSalt, ...(acks.presentation ? { presentation_ack: acks.presentation } : {}) })}\n`);
 } else {
   console.error('usage: holder keygen <name> | consent <name> <school-did> | present <name> <credential-file> <consent-file> <school-did> <nonce>');
   process.exit(2);
