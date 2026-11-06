@@ -36,6 +36,33 @@ export function otsState(proof, rootHex) {
 }
 
 /**
+ * Every Bitcoin block header attestation in a proof, with the message it commits to (hex, as hashed). A block whose
+ * merkle root equals this message byte-reversed confirms the attestation. Throws when the proof is for another digest
+ * or cannot be parsed.
+ * @param {Uint8Array} proof
+ * @param {string} rootHex
+ * @returns {Array<{ height: number, msg: string }>}
+ */
+export function otsBitcoinAttestations(proof, rootHex) {
+  let d;
+  try {
+    d = OTS.DetachedTimestampFile.deserialize(Buffer.from(proof));
+  } catch {
+    throw new Error('OTS proof cannot be parsed');
+  }
+  if (Buffer.from(d.fileDigest()).toString('hex') !== rootHex) throw new Error('OTS proof is for another digest');
+  const out = [];
+  const walk = (t) => {
+    for (const a of t.attestations) {
+      if (a instanceof OTS.Notary.BitcoinBlockHeaderAttestation) out.push({ height: a.height, msg: Buffer.from(t.msg).toString('hex') });
+    }
+    for (const [, child] of t.ops) walk(child);
+  };
+  walk(d.timestamp);
+  return out;
+}
+
+/**
  * Stamps a 32-byte root on the public OpenTimestamps calendars.
  * @param {string} rootHex
  * @returns {Promise<Uint8Array>} serialized detached timestamp

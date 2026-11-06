@@ -107,6 +107,7 @@ export function openStore(file) {
 
     receipt: (id) => db.prepare('SELECT * FROM receipts WHERE receipt_id = ?').get(id),
     latestReceipt: (holderDid) => db.prepare('SELECT * FROM receipts WHERE holder_did = ? ORDER BY verified_at DESC, rowid DESC LIMIT 1').get(holderDid),
+    recheckById: (id) => db.prepare('SELECT * FROM rechecks WHERE recheck_id = ?').get(id),
     latestRecheck: (receiptId) => db.prepare('SELECT * FROM rechecks WHERE receipt_id = ? ORDER BY checked_at DESC, rowid DESC LIMIT 1').get(receiptId),
     /** Receipts whose consent is still valid at `atIso`. */
     activeReceipts: (atIso) => db.prepare('SELECT * FROM receipts WHERE valid_until >= ? ORDER BY verified_at').all(atIso),

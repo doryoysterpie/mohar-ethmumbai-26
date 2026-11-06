@@ -65,7 +65,7 @@ test('bad requests are rejected before verification', async () => {
     assert.equal((await post(`${s.base}/present`, 'not json')).status, 400);
     assert.equal((await post(`${s.base}/present`, 'x'.repeat(70_000))).status, 413);
     assert.equal((await fetch(`${s.base}/present`, { method: 'POST', body: '{}' })).status, 415);
-    assert.equal((await fetch(`${s.base}/export/anything`)).status, 501);
+    assert.equal((await fetch(`${s.base}/export/anything`)).status, 404);
     assert.equal((await fetch(`${s.base}/nowhere`)).status, 404);
     assert.equal(w.store.refusals().length, 0);
   } finally {

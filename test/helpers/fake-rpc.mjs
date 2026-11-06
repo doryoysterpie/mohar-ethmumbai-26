@@ -3,7 +3,7 @@ import http from 'node:http';
 import { keccak256, parseTransaction, recoverTransactionAddress, toHex } from 'viem';
 
 /**
- * @param {{ fail?: boolean }} [options] fail: every call returns a JSON-RPC error
+ * @param {{ fail?: boolean, chainId?: number }} [options] fail: every call returns a JSON-RPC error; chainId: reported chain (Sepolia by default)
  */
 export async function fakeRpc(options = {}) {
   const state = { fail: Boolean(options.fail), txs: new Map(), block: 100, nonces: new Map(), calls: [] };
@@ -18,7 +18,7 @@ export async function fakeRpc(options = {}) {
         const r = (result) => ({ jsonrpc: '2.0', id: m.id, result });
         const [a] = m.params ?? [];
         switch (m.method) {
-          case 'eth_chainId': return r('0xaa36a7');
+          case 'eth_chainId': return r(toHex(options.chainId ?? 11155111));
           case 'eth_blockNumber': return r(toHex(state.block));
           case 'eth_getTransactionCount': return r(toHex(state.nonces.get(String(a).toLowerCase()) ?? 0));
           case 'eth_estimateGas': return r('0x5a3c');
