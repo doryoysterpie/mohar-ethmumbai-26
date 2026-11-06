@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Log service. Commands:
 //   serve      HTTP service on PORT (default 8081); closes a batch every MOHAR_BATCH_SECONDS (default 3600) when entries wait
+//              needs the operator key (.keys/log-operator.json) and that key published in site/operator.json
 //   batch      closes and anchors a batch now, prints it
 //   anchor     anchors every closed batch still missing a Sepolia transaction or an OpenTimestamps proof
 //   upgrade    upgrades pending OpenTimestamps proofs, prints their states
@@ -46,6 +47,16 @@ const print = (v) => process.stdout.write(`${JSON.stringify(v, null, 2)}\n`);
 const [cmd] = process.argv.slice(2);
 
 if (cmd === 'serve') {
+  // Commits are acknowledged under the operator key; the service does not start without one matching site/operator.json.
+  if (!operatorKey) {
+    console.error(`no operator key at ${OPERATOR_KEY_FILE}; run: node bin/log.mjs operator-keygen`);
+    process.exit(2);
+  }
+  const published = fs.existsSync(OPERATOR_DOC) ? JSON.parse(fs.readFileSync(OPERATOR_DOC, 'utf8')).id : undefined;
+  if (published !== log.operatorId) {
+    console.error(`the operator key ${log.operatorId} is not the one published in ${OPERATOR_DOC} (${published ?? 'none'})`);
+    process.exit(2);
+  }
   const port = Number(process.env.PORT ?? 8081);
   const every = Number(process.env.MOHAR_BATCH_SECONDS ?? 3600);
   createLogServer(log, { adminToken: process.env.MOHAR_ADMIN_TOKEN }).listen(port, () => {

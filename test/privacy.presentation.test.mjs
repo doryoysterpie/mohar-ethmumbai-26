@@ -12,6 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { signConsent, CONSENT_SCOPE } from '../src/holder/consent.mjs';
 import { buildPresentation, disclosedClaims } from '../src/holder/presentation.mjs';
 import { commitRecord } from '../src/log/client.mjs';
+import { operatorDocument } from '../src/log/ack.mjs';
 import { newSalt, saltedCommitment } from '../src/shared/commitment.mjs';
 import { createHash } from 'node:crypto';
 
@@ -174,7 +175,12 @@ test('the log client sends only an entry type and the salted commitment, never t
   try {
     const { presentation } = await present(manifest.credentials[0].certificate);
     const salt = newSalt();
-    await commitRecord({ logUrl: `http://127.0.0.1:${server.address().port}`, entryType: 'presentation', record: presentation, salt });
+    // This server answers without an entry or acknowledgement, so the client rejects; the posted bytes are what is checked.
+    const operator = operatorDocument((await generateEd25519()).publicJwk);
+    await assert.rejects(
+      commitRecord({ logUrl: `http://127.0.0.1:${server.address().port}`, entryType: 'presentation', record: presentation, salt, operator }),
+      /entry for another commitment/,
+    );
     assert.equal(bodies.length, 1);
     const body = JSON.parse(bodies[0]);
     assert.deepEqual(Object.keys(body).sort(), ['commitment', 'entry_type']);

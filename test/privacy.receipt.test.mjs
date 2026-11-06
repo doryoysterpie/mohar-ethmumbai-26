@@ -39,7 +39,7 @@ test('a re-check receipt carries no name, no holder identifier and no certificat
 test('the school posts only SHA-256 commitments of receipts and re-checks to the log', async () => {
   const log = await logServer();
   try {
-    const w = await world({ logUrl: log.url });
+    const w = await world({ logUrl: log.url, operator: log.operator });
     const r = await w.school.present({ presentation: await w.present(), consent: w.consent });
     w.now = new Date('2027-01-01T00:00:00Z');
     await w.school.recheck();

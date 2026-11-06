@@ -38,10 +38,10 @@ export async function scenario(options = {}) {
   const logServer = createLogServer(log);
   const logUrl = await listen(logServer);
 
-  const w = await world({ logUrl });
+  const w = await world({ logUrl, operator });
   const schoolStore = openStore(path.join(dir, 'school.sqlite'));
   const school = createSchool({
-    store: schoolStore, schoolPrivateJwk: w.schoolKey.privateJwk, didFetch: w.didFetch, fetchText: w.fetchText, logUrl, clock: () => w.now,
+    store: schoolStore, schoolPrivateJwk: w.schoolKey.privateJwk, didFetch: w.didFetch, fetchText: w.fetchText, logUrl, operator, clock: () => w.now,
   });
   const schoolServer = createServer(school);
   const schoolUrl = await listen(schoolServer);
@@ -49,8 +49,8 @@ export async function scenario(options = {}) {
   const presentation = await w.present({ nonce: school.nonce().nonce, aud: school.did });
   const consentSalt = newSalt();
   const presentationSalt = newSalt();
-  await commitRecord({ logUrl, entryType: 'consent', record: w.consent, salt: consentSalt });
-  await commitRecord({ logUrl, entryType: 'presentation', record: presentation, salt: presentationSalt });
+  await commitRecord({ logUrl, entryType: 'consent', record: w.consent, salt: consentSalt, operator });
+  await commitRecord({ logUrl, entryType: 'presentation', record: presentation, salt: presentationSalt, operator });
   const r = await school.present({ presentation, consent: w.consent, presentation_salt: presentationSalt });
   if (!r.ok) throw new Error(`scenario presentation refused: ${r.refusal} ${r.detail}`);
   w.now = new Date('2027-01-01T00:00:00.000Z');
