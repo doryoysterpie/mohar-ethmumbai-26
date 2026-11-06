@@ -36,7 +36,7 @@
   summary { cursor: pointer; color: var(--muted); font-size: 0.93em; }
   #status { color: var(--muted); min-height: 1.4em; margin: 12px 0 0; font-size: 0.9em; }
   #results { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
-  .check { display: grid; grid-template-columns: 8.5rem 5.5rem 1fr; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; font-size: 0.93em; }
+  .check { display: grid; grid-template-columns: 10.5rem 6.5rem 1fr; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; font-size: 0.93em; }
   .check .name { font-weight: 600; }
   .check .detail { color: var(--muted); overflow-wrap: anywhere; font-size: 0.95em; }
   .check.pass .result { color: var(--ok); font-weight: 600; }
@@ -63,7 +63,7 @@
   <p class="notice"><strong>SIMULATED.</strong> The issuer, credentials and certificates behind the sample bundle are simulated test data for invented people.</p>
 
   <h2>Check a receipt</h2>
-  <p class="sub">Paste an export bundle or use the sample. The page checks the school's signature, the log entry, the Merkle path, the Sepolia anchor and the Bitcoin timestamp, and sends nothing to the school or the platform.</p>
+  <p class="sub">Paste an export bundle or use the sample. The page checks the school's signature, the log entry, the Merkle path, the Sepolia anchor, the Bitcoin timestamp and the log operator's acknowledgement, and sends nothing to the school or the platform.</p>
 
   <label for="bundle">Bundle (JSON)</label>
   <textarea id="bundle" spellcheck="false" aria-describedby="status"></textarea>

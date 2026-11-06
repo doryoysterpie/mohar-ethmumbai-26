@@ -136,7 +136,7 @@ Before a batch is anchored, the log operator can roll back unbatched entries; th
 node bin/build-inspector.mjs            # writes site/inspector/index.html (not tracked; built for publishing)
 ```
 
-The page loads `site/sample/bundle.json` on open, and takes a pasted bundle or a chosen file. It contacts only the public Sepolia RPCs and the public Bitcoin block explorer. It shows the five checks; the certificate-binding line appears only when a certificate and salt are entered. OpenTimestamps proofs are read in the page by `src/anchor/ots-parse.mjs`, which has no dependency on Node built-ins.
+The page loads `site/sample/bundle.json` and `site/operator.json` on open, and takes a pasted bundle or a chosen file. Besides the site itself, it contacts only the public Sepolia RPCs and the public Bitcoin block explorer. It shows the six checks; the certificate-binding line appears only when a certificate and salt are entered. OpenTimestamps proofs are read in the page by `src/anchor/ots-parse.mjs`, which has no dependency on Node built-ins.
 
 ## Licence
 

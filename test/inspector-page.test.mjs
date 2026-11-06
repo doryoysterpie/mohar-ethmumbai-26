@@ -32,3 +32,12 @@ test('the sample bundle the page loads is a well-formed Mohar bundle', () => {
   assert.equal(b.sepolia.chain_id, 11155111);
   assert.equal(typeof b.ots.proof, 'string');
 });
+
+test('the sample bundle carries the log operator acknowledgement of its entry under the published operator key', async () => {
+  const { verifyAck } = await import('../src/log/ack.mjs');
+  const b = JSON.parse(fs.readFileSync(path.join(ROOT, 'site', 'sample', 'bundle.json'), 'utf8'));
+  const operator = JSON.parse(fs.readFileSync(path.join(ROOT, 'site', 'operator.json'), 'utf8'));
+  assert.equal(typeof b.ack, 'string', 'sample bundle has no acknowledgement');
+  const a = await verifyAck(b.ack, operator);
+  for (const f of ['seq', 'entry_hash', 'commitment']) assert.equal(a[f], b.entry[f], f);
+});

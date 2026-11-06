@@ -5,6 +5,11 @@ import { verifyBundle, esploraHeaders } from '../verify.mjs';
 const DEFAULT_RPCS = ['https://ethereum-sepolia-rpc.publicnode.com', 'https://1rpc.io/sepolia'];
 const $ = (id) => document.getElementById(id);
 
+/** The published log operator key (operator.json beside did.json). Undefined when it cannot be loaded. */
+const operator = fetch('../operator.json', { cache: 'no-store' })
+  .then((res) => (res.ok ? res.json() : undefined))
+  .catch(() => undefined);
+
 async function loadSample() {
   $('status').textContent = 'Loading the sample bundle…';
   try {
@@ -53,7 +58,7 @@ async function run() {
     } catch {
       throw new Error('the bundle is not valid JSON');
     }
-    const options = { rpcUrls: DEFAULT_RPCS, bitcoinHeader: esploraHeaders() };
+    const options = { rpcUrls: DEFAULT_RPCS, bitcoinHeader: esploraHeaders(), operator: await operator };
     const certText = $('certificate').value.trim();
     const salt = $('salt').value.trim();
     if (certText || salt) {
@@ -64,7 +69,7 @@ async function run() {
     }
     const { ok, checks } = await verifyBundle(bundle, options);
     render(checks, ok);
-    $('status').textContent = 'Done. Only a public Sepolia RPC and a public Bitcoin block explorer were contacted.';
+    $('status').textContent = 'Done. Besides this site, only a public Sepolia RPC and a public Bitcoin block explorer were contacted.';
   } catch (e) {
     $('status').textContent = `Could not check: ${e.message}`;
   } finally {
