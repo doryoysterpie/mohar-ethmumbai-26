@@ -8,11 +8,12 @@ import { rootFromPath, batchRoot } from '../log/merkle.mjs';
 import { readAnchorFrom } from '../anchor/sepolia.mjs';
 import { otsProofState } from '../anchor/ots-parse.mjs';
 import { certificateCommitment } from '../issuer/credential.mjs';
+import { verifyAck } from '../log/ack.mjs';
 
 export const SEPOLIA_CHAIN_ID = 11155111;
 const TYP = { receipt: 'receipt+jwt', recheck: 'recheck+jwt' };
 
-/** @typedef {{ check: string, result: 'pass' | 'fail' | 'pending', detail: string }} CheckResult */
+/** @typedef {{ check: string, result: 'pass' | 'fail' | 'pending' | 'not supplied', detail: string }} CheckResult */
 
 const pass = (check, detail) => ({ check, result: 'pass', detail });
 const fail = (check, detail) => ({ check, result: 'fail', detail });
@@ -114,7 +115,26 @@ async function checkOts(b, bitcoinHeader) {
 }
 
 /**
- * 6 (optional). The certificate and its salt, obtained from the school's presentation, recompute the receipt's
+ * 6. The log operator's acknowledgement: signed by the published operator key, and its seq, entry_hash and commitment
+ * are those of the bundle's log entry. A bundle without one reports 'not supplied'.
+ */
+async function checkAck(b, operator) {
+  if (b.ack === undefined || b.ack === null) return { check: 'acknowledgement', result: 'not supplied', detail: 'bundle carries no acknowledgement from the log operator' };
+  if (!operator) return fail('acknowledgement', 'no published operator key configured for the check');
+  let a;
+  try {
+    a = await verifyAck(b.ack, operator);
+  } catch (e) {
+    return fail('acknowledgement', `acknowledgement invalid: ${e.message}`);
+  }
+  for (const f of ['seq', 'entry_hash', 'commitment']) {
+    if (a[f] !== b.entry?.[f]) return fail('acknowledgement', `acknowledgement ${f} ${a[f]} is not the bundle entry's ${b.entry?.[f]}`);
+  }
+  return pass('acknowledgement', `operator ${operator.id} acknowledged entry ${a.seq} at ${a.ts}`);
+}
+
+/**
+ * 7 (optional). The certificate and its salt, obtained from the school's presentation, recompute the receipt's
  * certificate_commitment. Reported as "not supplied" when no certificate and salt are given.
  */
 function checkCertificate(b, certificate, salt) {
@@ -146,18 +166,20 @@ export function esploraHeaders(base = 'https://blockstream.info/api') {
 }
 
 /**
- * Runs the five checks on a bundle, and the optional sixth (certificate binding) when a certificate and its salt are
+ * Runs the six checks on a bundle, and the optional seventh (certificate binding) when a certificate and its salt are
  * supplied. Each check runs whatever the others found. `ok` is true when signature, entry, merkle and sepolia pass,
- * ots passes or is pending, and certificate binding passes or is not supplied.
+ * ots passes or is pending, the acknowledgement passes or is not supplied, and certificate binding passes or is not
+ * supplied.
  * @param {any} bundle
  * @param {{ rpcUrls?: string[], bitcoinHeader?: (height: number) => Promise<{ merkleroot: string, time: number }>,
- *   certificate?: Record<string, unknown>, certificateSalt?: string }} [options]
+ *   operator?: { id: string }, certificate?: Record<string, unknown>, certificateSalt?: string }} [options]
+ *   operator is the published operator document (operator.json)
  * @returns {Promise<{ ok: boolean, checks: CheckResult[] }>}
  */
 export async function verifyBundle(bundle, options = {}) {
   if (bundle?.format !== 'mohar-bundle/1') {
     const r = fail('format', `not a mohar-bundle/1 bundle`);
-    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots', 'certificate binding'].map((check) => ({ ...r, check })) };
+    return { ok: false, checks: ['signature', 'entry', 'merkle', 'sepolia', 'ots', 'acknowledgement', 'certificate binding'].map((check) => ({ ...r, check })) };
   }
   const checks = [
     await checkSignature(bundle),
@@ -165,8 +187,9 @@ export async function verifyBundle(bundle, options = {}) {
     checkMerkle(bundle),
     await checkSepolia(bundle, options.rpcUrls),
     await checkOts(bundle, options.bitcoinHeader ?? esploraHeaders()),
+    await checkAck(bundle, options.operator),
     checkCertificate(bundle, options.certificate, options.certificateSalt),
   ];
-  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks[4].result !== 'fail' && checks[5].result !== 'fail';
+  const ok = checks.slice(0, 4).every((c) => c.result === 'pass') && checks.slice(4).every((c) => c.result !== 'fail');
   return { ok, checks };
 }

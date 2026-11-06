@@ -18,10 +18,11 @@ export async function fetchProof({ logUrl, commitment, entryType, fetch: f = fet
 
 /**
  * Export bundle for a signed receipt or re-check receipt: the record, its salt, its log entry, its Merkle path, the
- * batch root and both anchors. Everything an inspector needs; nothing from the presentation or the consent.
- * @param {{ record: string, salt: string, recordType: 'receipt' | 'recheck', proof: any }} p
+ * batch root, both anchors and the log operator's acknowledgement of the entry when the school holds one. Everything an
+ * inspector needs; nothing from the presentation or the consent.
+ * @param {{ record: string, salt: string, recordType: 'receipt' | 'recheck', proof: any, ack?: string | null }} p
  */
-export function buildBundle({ record, salt, recordType, proof }) {
+export function buildBundle({ record, salt, recordType, proof, ack = null }) {
   if (!proof?.entry) throw new Error('the log has no entry for this record');
   if (proof.entry.entry_type !== recordType || proof.entry.commitment !== saltedCommitment(record, salt)) {
     throw new Error('the log entry is for another record');
@@ -47,5 +48,6 @@ export function buildBundle({ record, salt, recordType, proof }) {
       ? { chain_id: batch.sepolia.chain_id, tx_hash: batch.sepolia.tx_hash, block_number: batch.sepolia.block_number }
       : null,
     ots: batch.ots?.proof ? { proof: batch.ots.proof } : null,
+    ack: typeof ack === 'string' ? ack : null,
   };
 }

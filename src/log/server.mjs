@@ -31,7 +31,8 @@ function tokenMatches(header, expected) {
 
 /**
  * HTTP service for the log:
- *   POST /commit                { entry_type, commitment } -> 201 new entry, 200 existing entry, 400 anything else
+ *   POST /commit                { entry_type, commitment } -> 201 new entry, 200 existing entry, 400 anything else;
+ *                               the entry carries `ack`, signed by the operator key, when one is configured
  *   GET  /proof/{commitment}    entry, Merkle path and batch with both anchors; 404 when unknown;
  *                               ?entry_type= chooses among entry types; 409 when the commitment has several and none is chosen
  *   GET  /batches/{id}          batch summary
@@ -62,7 +63,8 @@ export function createLogServer(log, options = {}) {
         } catch (e) {
           return send(res, 400, { error: e.message });
         }
-        return send(res, out.created ? 201 : 200, out.entry);
+        const ack = await log.acknowledge(out.entry);
+        return send(res, out.created ? 201 : 200, ack ? { ...out.entry, ack } : out.entry);
       }
       if (req.method === 'GET' && parts[0] === 'proof' && parts.length === 2) {
         const entryType = url.searchParams.get('entry_type') ?? undefined;
