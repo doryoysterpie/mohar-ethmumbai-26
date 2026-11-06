@@ -6,6 +6,7 @@ import { readAnchor } from '../src/anchor/sepolia.mjs';
 import { sha256Hex, canonicalJson } from '../src/shared/encoding.mjs';
 import { scenario } from './helpers/scenario.mjs';
 import { cert } from './helpers/world.mjs';
+import { RECEIPT_CLAIMS } from '../src/verifier/school.mjs';
 
 const leaves = (v) => (v === null || typeof v !== 'object' ? [String(v)] : Object.values(v).flatMap(leaves));
 const PERSONAL = ['name', 'roll_no', 'dob', 'category', 'mother_name', 'father_or_husband_name', 'marks']
@@ -51,13 +52,23 @@ test('the verifier contacts nothing but the Sepolia RPC and the Bitcoin header s
   }
 });
 
-test('a bundle carries no personal data, no presentation and no consent', async () => {
+// The record a bundle carries is exactly one of these shapes. A receipt names the school, the issuer, the purpose, exact
+// times, the status result and the disclosed eligibility claims: pseudonymous eligibility data about one teacher.
+const RECORD_FIELDS = {
+  receipt: ['certificate_commitment', 'consent_hash', 'disclosed_claims', 'issuer', 'issuer_sig_valid', 'key_binding_valid',
+    'presentation_hash', 'purpose', 'receipt_id', 'recheck_due', 'status_checked_at', 'status_result', 'verified_at', 'verifier'],
+  recheck: ['alert', 'next_recheck_due', 'receipt_id', 'recheck_id', 'status_checked_at', 'status_result', 'verifier'],
+};
+
+test('a bundle carries no holder identifier, presentation, consent or undisclosed certificate detail, and its record has exactly the allowed fields', async () => {
   const s = await scenario();
   try {
     for (const id of [s.receipt.receipt_id, s.recheck.recheck_id]) {
       const bundle = await (await s.fetchBundle(id)).json();
       assert.deepEqual(Object.keys(bundle).sort(), ['ack', 'batch', 'entry', 'format', 'merkle_path', 'ots', 'record', 'record_type', 'salt', 'sepolia']);
       const decoded = JSON.parse(Buffer.from(bundle.record.split('.')[1], 'base64url'));
+      assert.deepEqual(Object.keys(decoded).sort(), RECORD_FIELDS[bundle.record_type], bundle.record_type);
+      if (bundle.record_type === 'receipt') assert.deepEqual(Object.keys(decoded.disclosed_claims).sort(), [...RECEIPT_CLAIMS].sort());
       // The acknowledgement holds the log entry's fields and the operator key id, nothing else.
       assert.equal(typeof bundle.ack, 'string');
       const ack = JSON.parse(Buffer.from(bundle.ack.split('.')[1], 'base64url'));

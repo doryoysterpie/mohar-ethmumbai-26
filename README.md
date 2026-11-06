@@ -94,7 +94,7 @@ node --env-file=.env bin/log.mjs check --anchors   # also compare each stored ro
 
 ### Acknowledgements
 
-Every accepted `/commit` returns an `ack`: a JWS (`log-ack+jwt`) signed by the log operator's Ed25519 key over `{ seq, entry_hash, entry_type, commitment, ts, operator_key_id }`. The log stores nothing extra; the teacher and the school keep their acknowledgements with their salts. The operator key is separate from the Sepolia key and is published in `site/operator.json`: `did:key:z6MkgvDZZZ8ExoJ489rWxMJsWh4fe6hhFzZ6Nd61PVcyZyy2`. Two acknowledgements with the same `seq` and different entry hashes are a signed proof that the operator replaced an entry:
+Every accepted `/commit` returns an `ack`: a JWS (`log-ack+jwt`) signed by the log operator's Ed25519 key over `{ seq, entry_hash, entry_type, commitment, ts, operator_key_id }`. The log refuses commits when it has no operator key, and `serve` does not start unless the operator key in `.keys/log-operator.json` is the one published in `site/operator.json`. The log stores nothing extra; the teacher and the school keep their acknowledgements with their salts. Both check each acknowledgement against the published operator key (`MOHAR_LOG_OPERATOR`, default `site/operator.json`) and against the entry the log returned: the teacher stops when one is missing or does not verify, and the school records the commit as not posted. The operator key is separate from the Sepolia key and is published in `site/operator.json`: `did:key:z6MkgvDZZZ8ExoJ489rWxMJsWh4fe6hhFzZ6Nd61PVcyZyy2`. Two acknowledgements with the same `seq` and different entry hashes are a signed proof that the operator replaced an entry:
 
 ```
 node bin/log.mjs operator-keygen                       # operator key in .keys/ (not tracked); writes site/operator.json
@@ -105,7 +105,7 @@ Reuse of a sequence number is detectable by any acknowledgement holder.
 
 ## Inspector
 
-An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction, the OpenTimestamps proof and the log operator's acknowledgement of the entry. It holds no presentation, no consent and no personal data.
+An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction, the OpenTimestamps proof and the log operator's acknowledgement of the entry. It holds no holder identifier, no presentation, no consent and no certificate detail beyond the receipt's disclosed claims. The receipt itself is pseudonymous eligibility data about one teacher: it names the school, the issuer, the purpose, the verification and status-check times, the status result and the disclosed claims (`qualified`, `paper`, `stage`, `exam_session`, `issuing_body`), and the school can link its `receipt_id` to the teacher.
 
 `bin/inspect.mjs` checks a bundle on its own, with no connection to the school or the log service:
 

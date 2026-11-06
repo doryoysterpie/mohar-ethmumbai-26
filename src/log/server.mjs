@@ -32,17 +32,19 @@ function tokenMatches(header, expected) {
 /**
  * HTTP service for the log:
  *   POST /commit                { entry_type, commitment } -> 201 new entry, 200 existing entry, 400 anything else;
- *                               the entry carries `ack`, signed by the operator key, when one is configured
+ *                               the entry always carries `ack`, signed by the operator key
  *   GET  /proof/{commitment}    entry, Merkle path and batch with both anchors; 404 when unknown;
  *                               ?entry_type= chooses among entry types; 409 when the commitment has several and none is chosen
  *   GET  /batches/{id}          batch summary
  *   POST /batch                 closes and anchors a batch now; operator token
  *   POST /upgrade               upgrades pending OpenTimestamps proofs; operator token
  * Operator routes take `authorization: Bearer <adminToken>` and are off when no token is set.
+ * Refuses to start for a log that has no operator key.
  * @param {ReturnType<typeof import('./service.mjs').createLog>} log
  * @param {{ adminToken?: string }} [options]
  */
 export function createLogServer(log, options = {}) {
+  if (!log.operatorId) throw new Error('the log service needs an operator key to acknowledge commits');
   const operator = (req, res) => {
     if (!options.adminToken) { send(res, 403, { error: 'operator routes are disabled on this service' }); return false; }
     if (!tokenMatches(req.headers.authorization, options.adminToken)) { send(res, 401, { error: 'unauthorized' }); return false; }
@@ -63,8 +65,9 @@ export function createLogServer(log, options = {}) {
         } catch (e) {
           return send(res, 400, { error: e.message });
         }
+        // A signing failure answers 500; the entry stays, and committing it again returns it with its acknowledgement.
         const ack = await log.acknowledge(out.entry);
-        return send(res, out.created ? 201 : 200, ack ? { ...out.entry, ack } : out.entry);
+        return send(res, out.created ? 201 : 200, { ...out.entry, ack });
       }
       if (req.method === 'GET' && parts[0] === 'proof' && parts.length === 2) {
         const entryType = url.searchParams.get('entry_type') ?? undefined;

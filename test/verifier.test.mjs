@@ -82,7 +82,7 @@ test('status on the receipt is not_revoked or unknown; revoked is refused', asyn
 test('a revoked index flips to revoked with alert true at the term check, and the re-check is logged', async () => {
   const log = await logServer();
   try {
-    const w = await world({ logUrl: log.url });
+    const w = await world({ logUrl: log.url, operator: log.operator });
     const r = await w.school.present({ presentation: await w.present({ statusIndex: 0 }), consent: w.consent });
     w.now = new Date('2027-01-01T00:00:00Z');
     w.statuses = [1, 1, 0];
