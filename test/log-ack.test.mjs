@@ -12,6 +12,9 @@ import { createLogServer } from '../src/log/server.mjs';
 import { logProblems } from '../src/log/integrity.mjs';
 import { verifyAck, compareAcks, operatorDocument } from '../src/log/ack.mjs';
 import { decodeJws, signJws } from '../src/shared/jws.mjs';
+import { saltedCommitment, newSalt } from '../src/shared/commitment.mjs';
+import { buildBundle } from '../src/verifier/export.mjs';
+import { verifyBundle } from '../src/inspector/verify.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const HEAD_KEY = 'ef'.repeat(32);
@@ -72,10 +75,23 @@ test('the auditor’s replay: the log alone reports itself intact, and the held 
     log = createLog({ store, ots: false, operatorKey: op.privateJwk });
     // (a) The stated limit: the log alone cannot see it.
     assert.deepEqual(logProblems(store), []);
-    const replacement = await commitAndAck(log, 'receipt', sha256Hex('replacement receipt'));
+    const replacementRecord = 'replacement receipt';
+    const replacementSalt = newSalt();
+    const replacement = await commitAndAck(log, 'receipt', saltedCommitment(replacementRecord, replacementSalt));
     assert.equal(replacement.entry.seq, 1);
     assert.notEqual(replacement.entry.entry_hash, original.entry.entry_hash);
     assert.deepEqual(logProblems(store), []);
+
+    // The verifier: a bundle for the entry now at seq 1, carrying the acknowledgement held for seq 1, fails the
+    // acknowledgement line; with the operator's acknowledgement of the replacement it passes.
+    await log.closeBatch();
+    const logProof = log.proof(saltedCommitment(replacementRecord, replacementSalt), 'receipt');
+    const bundle = buildBundle({ record: replacementRecord, salt: replacementSalt, recordType: 'receipt', proof: logProof, ack: original.ack });
+    const held = (await verifyBundle(bundle, { operator: doc, rpcUrls: [] })).checks.find((c) => c.check === 'acknowledgement');
+    assert.equal(held.result, 'fail');
+    assert.match(held.detail, /acknowledgement entry_hash [0-9a-f]{64} is not the bundle entry's [0-9a-f]{64}/);
+    const own = (await verifyBundle({ ...bundle, ack: replacement.ack }, { operator: doc, rpcUrls: [] })).checks.find((c) => c.check === 'acknowledgement');
+    assert.equal(own.result, 'pass');
     store.close();
 
     // (b) The acknowledgement the client kept, against the new one, proves equivocation.

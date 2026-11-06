@@ -20,8 +20,8 @@ test('the export verifies with both service databases deleted and both services 
     await assert.rejects(fetch(`${schoolUrl}/export/${s.receipt.receipt_id}`));
     await assert.rejects(fetch(`${logUrl}/batches/1`));
     for (const bundle of [receipt, recheck]) {
-      const r = await verifyBundle(bundle, { rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader });
-      assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass']], bundle.record_type);
+      const r = await verifyBundle(bundle, { rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader, operator: s.operator });
+      assert.deepEqual(r.checks.map((c) => [c.check, c.result]), [['signature', 'pass'], ['entry', 'pass'], ['merkle', 'pass'], ['sepolia', 'pass'], ['ots', 'pass'], ['acknowledgement', 'pass']], bundle.record_type);
       assert.equal(r.ok, true);
     }
   } finally {
@@ -38,7 +38,7 @@ test('the verifier contacts nothing but the Sepolia RPC and the Bitcoin header s
     const urls = [];
     globalThis.fetch = (u, init) => { urls.push(String(u instanceof Request ? u.url : u)); return realFetch(u, init); };
     try {
-      await verifyBundle(bundle, { rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader });
+      await verifyBundle(bundle, { rpcUrls: [s.rpc.url], bitcoinHeader: s.bitcoinHeader, operator: s.operator });
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -54,9 +54,13 @@ test('a bundle carries no personal data, no presentation and no consent', async 
   try {
     for (const id of [s.receipt.receipt_id, s.recheck.recheck_id]) {
       const bundle = await (await s.fetchBundle(id)).json();
-      assert.deepEqual(Object.keys(bundle).sort(), ['batch', 'entry', 'format', 'merkle_path', 'ots', 'record', 'record_type', 'salt', 'sepolia']);
+      assert.deepEqual(Object.keys(bundle).sort(), ['ack', 'batch', 'entry', 'format', 'merkle_path', 'ots', 'record', 'record_type', 'salt', 'sepolia']);
       const decoded = JSON.parse(Buffer.from(bundle.record.split('.')[1], 'base64url'));
-      const text = `${JSON.stringify(bundle)}\n${JSON.stringify(decoded)}`;
+      // The acknowledgement holds the log entry's fields and the operator key id, nothing else.
+      assert.equal(typeof bundle.ack, 'string');
+      const ack = JSON.parse(Buffer.from(bundle.ack.split('.')[1], 'base64url'));
+      assert.deepEqual(Object.keys(ack).sort(), ['commitment', 'entry_hash', 'entry_type', 'operator_key_id', 'seq', 'ts']);
+      const text = `${JSON.stringify(bundle)}\n${JSON.stringify(decoded)}\n${JSON.stringify(ack)}`;
       for (const v of PERSONAL) assert.ok(!text.includes(v), `"${v}" in the ${bundle.record_type} bundle`);
       assert.ok(!text.includes(s.presentation), 'presentation in the bundle');
       assert.ok(!text.includes(s.w.consent), 'consent in the bundle');

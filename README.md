@@ -105,7 +105,7 @@ Reuse of a sequence number is detectable by any acknowledgement holder.
 
 ## Inspector
 
-An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction and the OpenTimestamps proof. It holds no presentation, no consent and no personal data.
+An export bundle holds the signed receipt or re-check receipt, its salt, its log entry, its Merkle path, the batch root, the Sepolia transaction, the OpenTimestamps proof and the log operator's acknowledgement of the entry. It holds no presentation, no consent and no personal data.
 
 `bin/inspect.mjs` checks a bundle on its own, with no connection to the school or the log service:
 
@@ -113,13 +113,14 @@ An export bundle holds the signed receipt or re-check receipt, its salt, its log
 2. entry: the log entry's commitment recomputes from the record and its salt, and its `entry_hash` recomputes;
 3. merkle: the entry's path and the batch header (id, first seq, size, closing time) recompute the batch root, and the entry's seq is its position in the batch;
 4. sepolia: from one RPC that reports chain 11155111 and has the transaction: the transaction succeeded, its calldata is the batch root, and its block is the block the bundle names;
-5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`.
+5. ots: the OpenTimestamps proof is for the batch root, and its Bitcoin attestation matches the merkle root of that Bitcoin block. A proof with calendar attestations only is reported as `pending`;
+6. acknowledgement: the acknowledgement is signed by the published operator key, and its `seq`, `entry_hash` and `commitment` are those of the bundle's log entry. A bundle without one reports `not supplied`, never `pass`.
 
 ```
-node bin/inspect.mjs bundle.json        # MOHAR_SEPOLIA_RPCS and MOHAR_ESPLORA_URL override the public defaults
+node bin/inspect.mjs bundle.json [--operator site/operator.json]   # MOHAR_SEPOLIA_RPCS and MOHAR_ESPLORA_URL override the public defaults
 ```
 
-Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass and check 5 passes or is pending. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
+Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass, check 5 passes or is pending, and check 6 passes or is not supplied. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
 
 ## Limitations
 

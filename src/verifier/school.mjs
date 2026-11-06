@@ -240,6 +240,7 @@ export function createSchool(config) {
       const record = r ? r.receipt : rc.recheck;
       const salt = r ? r.receipt_salt : rc.recheck_salt;
       const recordType = r ? 'receipt' : 'recheck';
+      const ack = r ? r.receipt_ack : rc.recheck_ack;
       let proof;
       try {
         proof = await fetchProof({ logUrl: config.logUrl, commitment: saltedCommitment(record, salt), entryType: recordType, fetch: config.logFetch });
@@ -248,7 +249,7 @@ export function createSchool(config) {
       }
       if (!proof) return { ok: false, code: 409, error: 'the log has no entry for this record' };
       if (!proof.batch) return { ok: false, code: 409, error: 'the record is not in a closed batch yet' };
-      return { ok: true, bundle: buildBundle({ record, salt, recordType, proof }) };
+      return { ok: true, bundle: buildBundle({ record, salt, recordType, proof, ack }) };
     },
 
     /** Latest receipt and re-check for a holder, or null. */
