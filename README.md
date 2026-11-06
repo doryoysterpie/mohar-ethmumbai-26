@@ -2,7 +2,9 @@
 
 > **SIMULATED.** Every issuer, credential and certificate in this repository is simulated test data. No real issuing body is connected.
 
-Mohar records that a school verified a teacher's eligibility credential, and makes that record checkable later by anyone holding the export bundle.
+In 2025, 25,753 school appointments in West Bengal were annulled. The records that would have separated the untainted appointments from the tainted ones had been destroyed. Every teacher in service with more than five years left must hold a Teacher Eligibility Test qualification by 31 August 2028, and the department will have to audit it. Rule 4 of India's Digital Personal Data Protection Rules, 2025, which covers Consent Managers, commences on 13 November 2026.
+
+Mohar records that a school checked a teacher's eligibility credential. The record survives the platform's deletion and can be verified by anyone holding the export bundle.
 
 ## Run
 
@@ -39,7 +41,7 @@ MOHAR_SITE_DIR=site node bin/holder.mjs present teacher-a credential.txt consent
 
 `present` prints `{ presentation, presentation_salt }`, keeps the consent salt in `consent.jws.salt`, and posts both salted commitments to the log service when `MOHAR_LOG_URL` is set (it prints them otherwise). `MOHAR_SITE_DIR` reads the issuer's `did.json` from a local copy of the site instead of fetching it.
 
-The consent record follows the shape of a consent record under India's Digital Personal Data Protection Rules, 2025. Mohar is not a registered Consent Manager and does not claim to be. Withdrawal is recorded as available; a withdrawal endpoint is not in this version.
+The consent record follows the shape of a consent record under India's Digital Personal Data Protection Rules, 2025. Mohar is not a registered Consent Manager under Rule 4 of those Rules, commencing 13 November 2026, and does not claim to be. Withdrawal is recorded as available; a withdrawal endpoint is not in this version.
 
 ## School
 
@@ -124,10 +126,6 @@ node bin/inspect.mjs bundle.json --certificate certificate.json --certificate-sa
 
 Each check runs whatever the others found and fails with its own reason. The bundle verifies when checks 1 to 4 pass, check 5 passes or is pending, and checks 6 and 7 pass or are not supplied. Bitcoin block headers come from a public block explorer (blockstream.info by default), which the check trusts for the header.
 
-## Limitations
-
-Before a batch is anchored, the log operator can roll back unbatched entries; the log cannot prevent this, and clients hold signed acknowledgements that make it provable. Rotation of the operator key is not in this version.
-
 ### Inspector page
 
 `site/inspector/index.html` is the same verifier as one static page, built for the browser:
@@ -137,6 +135,18 @@ node bin/build-inspector.mjs            # writes site/inspector/index.html (not 
 ```
 
 The page loads `site/sample/bundle.json` and `site/operator.json` on open, and takes a pasted bundle or a chosen file. Besides the site itself, it contacts only the public Sepolia RPCs and the public Bitcoin block explorer. It shows the six checks; the certificate-binding line appears only when a certificate and salt are entered. OpenTimestamps proofs are read in the page by `src/anchor/ots-parse.mjs`, which has no dependency on Node built-ins.
+
+## Limitations
+
+Before a batch is anchored, the log operator can roll back unbatched entries; the log cannot prevent this, and clients hold signed acknowledgements that make it provable. Rotation of the operator key is not in this version. A receipt carries pseudonymous eligibility data (paper, stage, examination session, issuing body, status and times) tied to a holder key and never to a name; an inspector can narrow a small cohort with it, so bundles are released only to the inspecting authority for the stated purpose.
+
+## Known gaps
+
+The issuer is simulated; a real issuer integration and a status list served by a real issuer are not in this version. Receipt fields are not selectively disclosable, and the examination session is not bucketed to a year. A batch shows how many entries it holds, and transport to the services is not metadata-protective. Credentials, receipts and acknowledgements are signed with Ed25519, with no post-quantum migration in this version. There are no teacher or school screens; both run from the command line. A consent withdrawal endpoint and rotation of the log operator key are not in this version.
+
+## How this was built
+
+The code was written by AI coding agents working from the author's instructions. The author made every design decision, commissioned every audit (each run by a separate AI agent) and ruled on its findings, and performed every merge.
 
 ## Licence
 
