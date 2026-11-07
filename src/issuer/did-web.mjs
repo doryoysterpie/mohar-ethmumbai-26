@@ -1,5 +1,6 @@
 import { Resolver } from 'did-resolver';
 import { getResolver } from 'web-did-resolver';
+import { ISSUER_NOTICE } from './notice.mjs';
 
 /**
  * did:web identifier for a site base URL, e.g. https://host/path -> did:web:host:path.
@@ -14,7 +15,7 @@ export function didWebFromBase(baseUrl) {
 }
 
 /**
- * DID document with one Ed25519 assertion key.
+ * DID document with one Ed25519 assertion key and the issuer notice in `notice`.
  * @param {string} did
  * @param {import('../shared/keys.mjs').Ed25519Jwk} publicJwk
  * @returns {{ document: object, kid: string }}
@@ -26,6 +27,7 @@ export function didDocument(did, publicJwk) {
     document: {
       '@context': ['https://www.w3.org/ns/did/v1', 'https://w3id.org/security/suites/jws-2020/v1'],
       id: did,
+      notice: ISSUER_NOTICE,
       verificationMethod: [{ id: kid, type: 'JsonWebKey2020', controller: did, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: publicJwk.x } }],
       assertionMethod: [kid],
     },

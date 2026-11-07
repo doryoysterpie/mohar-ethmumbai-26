@@ -4,6 +4,7 @@
     "https://w3id.org/security/suites/jws-2020/v1"
   ],
   "id": "did:web:doryoysterpie.github.io:mohar-ethmumbai-26",
+  "notice": "SIMULATED issuer for a demonstration; not a real examination body.",
   "verificationMethod": [
     {
       "id": "did:web:doryoysterpie.github.io:mohar-ethmumbai-26#key-1",
