@@ -146,7 +146,7 @@ The issuer is simulated; a real issuer integration and a status list served by a
 
 ## How this was built
 
-The code was written by AI coding agents working from the author's instructions. The author made every design decision, commissioned every audit (each run by a separate AI agent) and ruled on its findings, and performed every merge.
+The code was written by AI coding agents working from the author's instructions. The author made every design decision, commissioned every audit (each run by a separate AI agent) and ruled on its findings.
 
 ## Licence
 
