@@ -8,6 +8,7 @@ import { getListFromStatusListJWT } from '@owf/token-status-list';
 import { buildStatusList, checkStatus } from '../src/issuer/status-list.mjs';
 import { issueCredential, verifyCredential, certificateCommitment } from '../src/issuer/credential.mjs';
 import { ISSUER_DID, SITE_BASE, STATUS_LIST_URI, DISCLOSABLE } from '../src/issuer/profile.mjs';
+import { ISSUER_NOTICE } from '../src/issuer/notice.mjs';
 
 const cert = JSON.parse(fs.readFileSync(new URL('../fixtures/certificates/teacher-a.json', import.meta.url), 'utf8'));
 
@@ -148,4 +149,13 @@ test('the published DID document and status list agree with each other', async (
   const firstFree = Math.max(...manifest.credentials.map((c) => c.status_index)) + 1;
   const free = { iss: ISSUER_DID, status: { status_list: { idx: firstFree, uri: STATUS_LIST_URI } } };
   assert.equal((await checkStatus(free, { fetchText, didFetch })).result, 'unknown', `unallocated index ${firstFree}`);
+});
+
+test('the published DID document and status list carry the SIMULATED notice', () => {
+  const doc = JSON.parse(fs.readFileSync(new URL('../site/did.json', import.meta.url), 'utf8'));
+  assert.equal(doc.notice, ISSUER_NOTICE);
+  const list = fs.readFileSync(new URL('../site/status/tet-eligibility.jwt', import.meta.url), 'utf8').trim();
+  const payload = JSON.parse(Buffer.from(list.split('.')[1], 'base64url'));
+  assert.equal(payload.notice, ISSUER_NOTICE);
+  assert.match(ISSUER_NOTICE, /SIMULATED/);
 });

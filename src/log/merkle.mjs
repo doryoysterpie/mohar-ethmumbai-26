@@ -9,7 +9,7 @@ const bytes = (h) => {
 /** Leaf for a log entry: SHA-256(0x00 || entry_hash). */
 export const leafHash = (entryHashHex) => hex(sha256(Buffer.concat([Buffer.from([0x00]), bytes(entryHashHex)])));
 
-/** Padding leaf: SHA-256(0x02). No entry can produce it, because entry leaves are prefixed with 0x00. */
+/** Padding leaf: SHA-256(0x02), disjoint from 0x00-prefixed entry leaves. */
 export const EMPTY_LEAF = hex(sha256(Buffer.from([0x02])));
 
 /** Inner node: SHA-256(0x01 || left || right). */

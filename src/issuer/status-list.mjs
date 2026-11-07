@@ -4,12 +4,13 @@ import {
 import { toBase64url, fromBase64url } from '../shared/encoding.mjs';
 import { verifierFor } from '../shared/keys.mjs';
 import { resolveIssuerKey } from './did-web.mjs';
+import { ISSUER_NOTICE } from './notice.mjs';
 
 /** @typedef {'not_revoked' | 'revoked' | 'unknown'} StatusResult */
 
 /**
  * Signed status list token (IETF Token Status List, JWT form, one bit per credential).
- * The signed payload carries `entries`, the number of allocated indices; the bits that pad the list to a whole
+ * The signed payload carries `notice`, the issuer notice, and `entries`, the number of allocated indices; the bits that pad the list to a whole
  * byte are set, so an unallocated index never reads as clear.
  * @param {{ uri: string, statuses: number[], issuerDid: string, kid: string, signer: (data: string) => Promise<string>, iat?: number }} p
  * @returns {Promise<string>}
@@ -21,7 +22,7 @@ export async function buildStatusList({ uri, statuses, issuerDid, kid, signer, i
   const list = new StatusList(padded, 1);
   const { header, payload } = createHeaderAndPayload(
     list,
-    { iss: issuerDid, sub: uri, iat: iat ?? Math.floor(Date.now() / 1000), entries: statuses.length },
+    { iss: issuerDid, sub: uri, iat: iat ?? Math.floor(Date.now() / 1000), notice: ISSUER_NOTICE, entries: statuses.length },
     { alg: 'EdDSA', typ: 'statuslist+jwt', kid },
   );
   const enc = (o) => toBase64url(new TextEncoder().encode(JSON.stringify(o)));

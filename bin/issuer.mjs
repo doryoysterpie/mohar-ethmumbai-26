@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SIMULATED issuer. Commands:
 //   keygen [--force]                       new issuer key in .keys/issuer.json; writes site/did.json
+//   did                                    rewrites site/did.json from the existing key in .keys/issuer.json
 //   publish                                writes site/status/tet-eligibility.jwt from fixtures/issuance.json
 //   issue <certificate.json> <holder-did>  prints a credential for the certificate's status index in fixtures/issuance.json
 import fs from 'node:fs';
@@ -36,6 +37,11 @@ if (cmd === 'keygen') {
   const { document, kid } = didDocument(ISSUER_DID, publicJwk);
   write(KEY_FILE, `${JSON.stringify({ did: ISSUER_DID, kid, privateJwk }, null, 2)}\n`, 0o600);
   write(path.join(SITE, 'did.json'), `${JSON.stringify(document, null, 2)}\n`);
+} else if (cmd === 'did') {
+  const key = readKey();
+  const { document, kid } = didDocument(key.did, { kty: 'OKP', crv: 'Ed25519', x: key.privateJwk.x });
+  if (kid !== key.kid) throw new Error('key id in .keys/issuer.json does not match the DID document');
+  write(path.join(SITE, 'did.json'), `${JSON.stringify(document, null, 2)}\n`);
 } else if (cmd === 'publish') {
   const key = readKey();
   const { credentials } = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
@@ -61,6 +67,6 @@ if (cmd === 'keygen') {
   });
   process.stdout.write(`${credential}\n`);
 } else {
-  console.error('usage: issuer keygen [--force] | publish | issue <certificate.json> <holder-did:key>');
+  console.error('usage: issuer keygen [--force] | did | publish | issue <certificate.json> <holder-did:key>');
   process.exit(2);
 }
